@@ -16,7 +16,19 @@ GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:?Missing GKE_CLUSTER_NAME}"
 GKE_CLUSTER_REGION="${GKE_CLUSTER_REGION:?Missing GKE_CLUSTER_REGION}"
 
 AGENT_IMAGE_REPO="${AGENT_IMAGE_REPO:?Missing AGENT_IMAGE_REPO}"
-IMAGE_URI="${AGENT_IMAGE_REPO}:${AGENT_IMAGE_TAG}"
+AGENT_IMAGE_URI="${AGENT_IMAGE_REPO}:${AGENT_IMAGE_TAG}"
+
+GKE_SERVICE_ACCOUNT_NAME="${GKE_SERVICE_ACCOUNT_NAME:?Missing GKE_SERVICE_ACCOUNT_NAME}"
+GKE_SERVICE_ACCOUNT_EMAIL="${GKE_SERVICE_ACCOUNT_EMAIL:?Missing GKE_SERVICE_ACCOUNT_EMAIL}"
+
+# Export for envsubst (deployment.yaml uses ${AGENT_IMAGE_URI} and ${GKE_SERVICE_ACCOUNT_NAME},
+# service.yaml and virtual-service.yaml use ${GKE_NAMESPACE},
+# virtual-service.yaml uses ${GKE_CLUSTER_REGION} and ${GKE_HTTP_URL_DOMAIN})
+export AGENT_IMAGE_URI="$AGENT_IMAGE_URI"
+export GKE_SERVICE_ACCOUNT_NAME="$GKE_SERVICE_ACCOUNT_NAME"
+export GKE_NAMESPACE="$GKE_NAMESPACE"
+export GKE_CLUSTER_REGION="$GKE_CLUSTER_REGION"
+export GKE_HTTP_URL_DOMAIN="${GKE_HTTP_URL_DOMAIN:?Missing GKE_HTTP_URL_DOMAIN}"
 
 GOOGLE_GENAI_USE_VERTEXAI="TRUE"
 
@@ -49,20 +61,19 @@ gcloud container clusters get-credentials "$GKE_CLUSTER_NAME" --region "$GKE_CLU
 echo "Building image with docker"
 docker build --build-arg GOOGLE_GENAI_USE_VERTEXAI="$GOOGLE_GENAI_USE_VERTEXAI" -t "$APP_NAME" .
 
-echo "Tagging and pushing image: $IMAGE_URI"
-docker tag "$APP_NAME" "$IMAGE_URI"
-docker push "$IMAGE_URI"
+echo "Tagging and pushing image: $AGENT_IMAGE_URI"
+docker tag "$APP_NAME" "$AGENT_IMAGE_URI"
+docker push "$AGENT_IMAGE_URI"
 
 #echo "Ensuring namespace exists: $GKE_NAMESPACE"
 #kubectl create namespace "$GKE_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
 echo "Applying Kubernetes manifests"
-kubectl apply -f k8s/deployment.yaml -n "$GKE_NAMESPACE"
-kubectl apply -f k8s/service.yaml -n "$GKE_NAMESPACE"
-kubectl apply -f k8s/virtual-service.yaml -n "$GKE_NAMESPACE"
+envsubst < k8s/deployment.yaml | kubectl apply -n "$GKE_NAMESPACE" -f -
+envsubst < k8s/service.yaml | kubectl apply -n "$GKE_NAMESPACE" -f -
+envsubst < k8s/virtual-service.yaml | kubectl apply -n "$GKE_NAMESPACE" -f -
 
-echo "Updating deployment image and runtime environment values"
-kubectl set image deployment "$APP_NAME" "$APP_NAME=$IMAGE_URI" -n "$GKE_NAMESPACE"
+echo "Updating deployment runtime environment values"
 kubectl set env deployment/"$APP_NAME" -n "$GKE_NAMESPACE" \
   GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
   GOOGLE_CLOUD_LOCATION="$GOOGLE_CLOUD_LOCATION" \

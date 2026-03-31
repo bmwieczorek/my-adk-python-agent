@@ -175,6 +175,10 @@ export GKE_CLUSTER_PROJECT=...
 export GKE_CLUSTER_NAME=...
 export GKE_CLUSTER_REGION=...
 export AGENT_IMAGE_REPO=...
+export AGENT_IMAGE_URI=...                 # e.g. ${AGENT_IMAGE_REPO}:0.0.3
+export GKE_SERVICE_ACCOUNT_NAME=...        # K8s SA mapped to GCP SA via Workload Identity
+export GKE_SERVICE_ACCOUNT_EMAIL=...       # K8s SA mapped to GCP SA via Workload Identity
+export GKE_HTTP_URL_DOMAIN=...             # e.g. example.com
 
 
 ./deploy_gke.sh
@@ -223,11 +227,15 @@ Kubernetes resources overview:
 | **VirtualService** | `k8s/virtual-service.yaml` | Routes external traffic from the Istio gateway to the Service  |
 
 ```bash
-kubectl apply -f k8s/deployment.yaml -n ${GKE_NAMESPACE}
-kubectl apply -f k8s/service.yaml -n ${GKE_NAMESPACE}
-kubectl apply -f k8s/virtual-service.yaml -n ${GKE_NAMESPACE}
+# deployment.yaml uses ${GKE_SERVICE_ACCOUNT_NAME} and ${AGENT_IMAGE_URI} placeholders,
+# service.yaml uses ${GKE_NAMESPACE} —
+# envsubst resolves them from environment variables before piping to kubectl.
+# envsubst is a standard GNU gettext utility (available on macOS and Linux). It reads stdin, replaces ${VAR} references with their environment variable values, and writes to stdout
+envsubst < k8s/deployment.yaml | kubectl apply -n ${GKE_NAMESPACE} -f -
+envsubst < k8s/service.yaml | kubectl apply -n ${GKE_NAMESPACE} -f -
+envsubst < k8s/virtual-service.yaml | kubectl apply -n ${GKE_NAMESPACE} -f -
 
-# Runtime values passed to the Deployment (not hardcoded in k8s/deployment.yaml)
+# Runtime values passed to the Deployment via kubectl set env
 export GOOGLE_CLOUD_PROJECT=...
 export GOOGLE_CLOUD_LOCATION=...
 export BIG_QUERY_DATASET_ID=...
@@ -245,13 +253,13 @@ kubectl rollout status deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
 ### 5. Grant Vertex AI permissions (one-time, already done ✅)
 
 The pod uses Workload Identity with K8s SA mapped to GCP SA:
-`${GKE_SERVICE_ACCOUNT}`
+`${GKE_SERVICE_ACCOUNT_EMAIL}`
 
 This SA needs the `Vertex AI User` role on project `${GOOGLE_CLOUD_PROJECT}` to call the Gemini model:
 
 ```bash
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
   --role="roles/aiplatform.user"
 ```
 
@@ -263,11 +271,11 @@ roles on project `${GOOGLE_CLOUD_PROJECT}`:
 
 ```bash
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
   --role="roles/bigquery.dataEditor"
 
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
   --role="roles/bigquery.jobUser"
 ```
 
@@ -292,7 +300,7 @@ Then open http://localhost:8000 in your browser.
 External URL (via Istio VirtualService):
 
 ```
-https://bartek-adk-agent-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}...
+https://bartek-adk-agent-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
 ```
 
 ### 9. Update deployment (after pushing a new image)
@@ -438,7 +446,7 @@ the GCP Trace Explorer.
 
      ```bash
      gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-       --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+       --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
        --role="roles/cloudtrace.agent"
      ```
 

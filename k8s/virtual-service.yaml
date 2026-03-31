@@ -1,0 +1,20 @@
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  labels:
+    app: bartek-adk-agent
+  name: bartek-adk-agent
+  namespace: ${GKE_NAMESPACE}
+spec:
+  gateways:
+    - istio-system/apps-internal-gateway
+    - mesh
+  hosts:
+    - bartek-adk-agent-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
+  http:
+    - route:
+        - destination:
+            host: bartek-adk-agent.${GKE_NAMESPACE}.svc.cluster.local
+            port:
+              number: 8000
+
