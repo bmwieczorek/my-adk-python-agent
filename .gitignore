@@ -1,4 +1,5 @@
 .adk
 my_bq_agent/.adk
 .idea
+my-adk-python-agent.iml
 .env
