@@ -1,0 +1,5 @@
+# Lean dependencies for running the agent in Docker/Podman via `adk web`
+# Sor far no Vertex AI deployment APIs needed.
+google-adk
+pendulum
+

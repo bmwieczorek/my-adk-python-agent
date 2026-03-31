@@ -1,0 +1,9 @@
+# Full dependencies for Vertex AI Agent Engine deployment (deploy.py, delete.py, api.py, rest.py)
+# google-cloud-aiplatform[adk] pulls in compatible versions of google-genai and google-adk as transitive dependencies
+# google-cloud-aiplatform[agent_engines] for vertexai.agent_engines.create/delete/get
+# google-cloud-aiplatform[adk] for agent_engines.AdkApp and because it brings in google-adk (which gives google.adk.plugins.ReflectAndRetryToolPlugin used in deploy.py)
+google-cloud-aiplatform[adk,agent_engines]
+pendulum
+# GenAI OTel instrumentation for Gemini call spans in Cloud Trace.
+# Pin to avoid pulling in a newer opentelemetry-api that conflicts with google-adk's constraints.
+opentelemetry-instrumentation-google-genai>=0.7b0,<1
