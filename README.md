@@ -110,7 +110,7 @@ Upgrade all packages to their latest compatible versions:
 
 ```bash
 pip-compile --upgrade requirements-docker.in
-pip-compile --upgrade requirements.in
+pip-compile --upgrade -v requirements.in
 ```
 
 Install/sync the pinned dependencies into the current environment:
@@ -138,15 +138,16 @@ pip list --outdated
 
 ```bash
 docker build --build-arg GOOGLE_GENAI_USE_VERTEXAI=TRUE -t bartek-adk-agent . && docker image prune -f
-(docker rm -f bartek-adk-agent 2>/dev/null || true) && docker run --name bartek-adk-agent -p 8000:8000 -it \
-  -e GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT} \
-  -e GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION} \
-  -e BIG_QUERY_DATASET_ID=${BIG_QUERY_DATASET_ID} \
-  -e GCS_BUCKET=${GCS_BUCKET} \
-  -v "$HOME/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro" \
-  -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json \
-  bartek-adk-agent && docker container prune -f
+#(docker rm -f bartek-adk-agent 2>/dev/null || true) && docker run --name bartek-adk-agent -p 8000:8000 -it \
+#  -e GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT} \
+#  -e GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION} \
+#  -e BIG_QUERY_DATASET_ID=${BIG_QUERY_DATASET_ID} \
+#  -e GCS_BUCKET=${GCS_BUCKET} \
+#  -v "$HOME/.config/gcloud/application_default_credentials.json:/tmp/adc.json:ro" \
+#  -e GOOGLE_APPLICATION_CREDENTIALS=/tmp/adc.json \
+#  bartek-adk-agent && docker container prune -f
 
+(docker rm -f bartek-adk-agent 2>/dev/null || true) && \
 docker run --name bartek-adk-agent -p 8000:8000 --rm -it \
   -e GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT} \
   -e GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION} \
@@ -176,8 +177,7 @@ export GKE_CLUSTER_NAME=...
 export GKE_CLUSTER_REGION=...
 export AGENT_IMAGE_REPO=...
 export AGENT_IMAGE_URI=...                 # e.g. ${AGENT_IMAGE_REPO}:0.0.3
-export GKE_SERVICE_ACCOUNT_NAME=...        # K8s SA mapped to GCP SA via Workload Identity
-export GKE_SERVICE_ACCOUNT_EMAIL=...       # K8s SA mapped to GCP SA via Workload Identity
+export GKE_SERVICE_ACCOUNT=...             # GCP SA email (e.g. name@project.iam.gserviceaccount.com); K8s SA name is derived as part before '@'
 export GKE_HTTP_URL_DOMAIN=...             # e.g. example.com
 
 
@@ -253,13 +253,13 @@ kubectl rollout status deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
 ### 5. Grant Vertex AI permissions (one-time, already done ✅)
 
 The pod uses Workload Identity with K8s SA mapped to GCP SA:
-`${GKE_SERVICE_ACCOUNT_EMAIL}`
+`${GKE_SERVICE_ACCOUNT}`
 
 This SA needs the `Vertex AI User` role on project `${GOOGLE_CLOUD_PROJECT}` to call the Gemini model:
 
 ```bash
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-  --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
   --role="roles/aiplatform.user"
 ```
 
@@ -271,11 +271,11 @@ roles on project `${GOOGLE_CLOUD_PROJECT}`:
 
 ```bash
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-  --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
   --role="roles/bigquery.dataEditor"
 
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-  --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
   --role="roles/bigquery.jobUser"
 ```
 
@@ -446,7 +446,7 @@ the GCP Trace Explorer.
 
      ```bash
      gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-       --member="serviceAccount:${GKE_SERVICE_ACCOUNT_EMAIL}" \
+       --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
        --role="roles/cloudtrace.agent"
      ```
 
