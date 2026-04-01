@@ -6,4 +6,5 @@ google-cloud-aiplatform[adk,agent_engines]
 pendulum
 # GenAI OTel instrumentation for Gemini call spans in Cloud Trace.
 # Pin to avoid pulling in a newer opentelemetry-api that conflicts with google-adk's constraints.
-opentelemetry-instrumentation-google-genai>=0.7b0,<1
+# opentelemetry-instrumentation-google-genai>=0.7b0,<1
+opentelemetry-instrumentation-google-genai
