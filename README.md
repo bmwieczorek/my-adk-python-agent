@@ -595,3 +595,65 @@ LIMIT 1000
 > with parent-child relationships and timing. The BQ plugin gives you structured agent events
 > with detailed token breakdowns. They complement each other.
 
+## Apache Beam Maven Dependency Upgrade Agent (`my_upgrade_agent`)
+
+An ADK agent that upgrades Apache Beam and related dependencies in a `pom.xml` following the
+BOM (Bill of Materials) chain: **Beam → libraries-bom → google-cloud-bom → individual libraries**.
+
+Based on the approach documented in the
+[my-upgrade-apache-beam-maven-dependencies](https://github.com/bmwieczorek/my-apache-beam-dataflow/blob/master/.github/skills/my-upgrade-apache-beam-maven-dependencies/SKILL.md) skill.
+
+### How it works
+
+1. Provide the agent with a **raw HTTP link** to a `pom.xml` (e.g. a GitHub raw URL)
+2. The agent fetches and parses the `pom.xml`, extracting `<properties>` version values
+3. Finds the **latest Beam release** from Maven Central
+4. Resolves the **BOM chain**: Beam → `libraries-bom` (from `BeamModulePlugin.groovy`) → `google-cloud-bom` (from `libraries-bom` POM) → BigQuery & Storage versions (from `google-cloud-bom` POM)
+5. Checks **independently versioned** dependencies (hadoop, slf4j, commons-codec, parquet, junit) via `maven-metadata.xml`
+6. Applies property upgrades and returns a **unified diff** and summary table
+
+### BOM-chain dependencies (versions from BOM)
+
+| Dependency | Source |
+|---|---|
+| `beam.version` | Maven Central `maven-metadata.xml` |
+| `libraries-bom` | Beam's `BeamModulePlugin.groovy` |
+| `google-cloud-bom` | `libraries-bom` POM |
+| `google-cloud-bigquery.version` | `google-cloud-bom` POM |
+| `google-cloud-storage.version` | `google-cloud-bom` POM |
+
+### Independently versioned dependencies (versions from Maven Central)
+
+| Dependency | Maven metadata artifact |
+|---|---|
+| `hadoop.version` | `org.apache.hadoop:hadoop-common` |
+| `slf4j.version` | `org.slf4j:slf4j-api` (excludes alpha/beta) |
+| `commons-codec.version` | `commons-codec:commons-codec` |
+| `parquet.version` | `org.apache.parquet:parquet-avro` |
+| `junit.version` | `junit:junit` |
+
+### Tools
+
+| Tool | Description |
+|------|-------------|
+| `fetch_pom_xml` | Downloads a `pom.xml` from an HTTP URL |
+| `parse_pom_dependencies` | Parses dependencies, plugins, properties, and resolves `${...}` placeholders |
+| `get_latest_beam_version` | Gets latest Beam release from Maven Central `maven-metadata.xml` |
+| `get_libraries_bom_version_from_beam` | Resolves `libraries-bom` version from Beam's `BeamModulePlugin.groovy` |
+| `get_google_cloud_bom_version_from_libraries_bom` | Resolves `google-cloud-bom` version from `libraries-bom` POM |
+| `get_bom_managed_versions` | Gets BigQuery and Storage versions from `google-cloud-bom` POM |
+| `get_latest_maven_version_from_metadata` | Gets latest stable version from Maven Central for independently versioned deps |
+| `upgrade_pom_xml` | Applies version upgrades (property-based) to the raw XML text |
+| `generate_diff` | Produces a unified diff between original and upgraded `pom.xml` |
+
+### Running locally
+
+```bash
+adk web .
+# Then select "my_upgrade_agent" in the ADK web UI
+```
+
+Example prompt:
+
+> Please upgrade the dependencies in this pom.xml: https://raw.githubusercontent.com/bmwieczorek/my-apache-beam-dataflow/master/pom.xml
+
