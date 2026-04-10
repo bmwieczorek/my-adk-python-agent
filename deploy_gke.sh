@@ -101,3 +101,4 @@ echo "Deployment complete. Current pods:"
 echo "+ kubectl get pods -n $GKE_NAMESPACE -l app=$APP_NAME"
 kubectl get pods -n "$GKE_NAMESPACE" -l app="$APP_NAME"
 
+echo "App deployment url: https://${APP_NAME}-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
