@@ -20,4 +20,4 @@ RUN pip install --no-cache-dir -r requirements-docker.txt
 EXPOSE 8000
 COPY --chmod=775 . .
 
-ENTRYPOINT ["adk", "web", "--host", "0.0.0.0"]
+ENTRYPOINT ["adk", "web", "--host", "0.0.0.0", "--otel_to_cloud",  "." ]
