@@ -8,6 +8,7 @@ SELECT
     JSON_VALUE(attributes, '$."gen_ai.operation.name"') AS operation_name,
     JSON_VALUE(attributes, '$."gen_ai.request.model"') AS model,
     JSON_VALUE(attributes, '$."gen_ai.agent.name"') AS agent_name,
+    -- attributes['gen_ai.agent.name'] AS agent_name,
     ARRAY_TO_STRING(JSON_VALUE_ARRAY(attributes, '$."gen_ai.response.finish_reasons"'), '|') AS reason,
 
     JSON_QUERY(SAFE.PARSE_JSON(JSON_VALUE(attributes, '$."gcp.vertex.agent.llm_request"')), '$.contents[0].parts[0].text') AS llm_request_content1,

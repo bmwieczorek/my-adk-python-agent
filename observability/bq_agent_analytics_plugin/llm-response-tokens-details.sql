@@ -2,7 +2,7 @@ SELECT
     timestamp,
     JSON_VALUE(content, '$.response') AS response,
 
-    -- Summarized token counts (from content.usage, written by the plugin)
+    -- Summarized token counts (from content.usage, written by the bq_agent_analytics plugin)
     COALESCE(SAFE_CAST(JSON_VALUE(content, '$.usage.prompt') AS INT64), 0) AS input_tokens,
     COALESCE(SAFE_CAST(JSON_VALUE(content, '$.usage.completion') AS INT64), 0) AS output_tokens,
     COALESCE(SAFE_CAST(JSON_VALUE(content, '$.usage.total') AS INT64), 0) AS total_tokens,
