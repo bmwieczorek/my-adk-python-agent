@@ -17,6 +17,7 @@ SELECT
     JSON_QUERY(SAFE.PARSE_JSON(JSON_VALUE(attributes, '$."gcp.vertex.agent.llm_response"')), '$.content.parts[0].text') AS llm_response_text,
     TIMESTAMP_DIFF(end_time, start_time, MILLISECOND) AS duration_ms
 FROM
+    -- replace project-id with real project
     `project-id.global._Trace._AllSpans`
 WHERE
     IFNULL(JSON_VALUE(attributes, '$."/component"'), '') != 'AppServer'
