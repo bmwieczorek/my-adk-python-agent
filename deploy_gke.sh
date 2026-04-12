@@ -8,7 +8,7 @@ cd "$ROOT_DIR"
 
 # Deployment settings
 APP_NAME="bartek-adk-agent"
-AGENT_IMAGE_TAG="0.0.3"
+AGENT_IMAGE_TAG="0.0.6"
 
 GKE_NAMESPACE="${GKE_NAMESPACE:?Missing GKE_NAMESPACE}"
 GKE_CLUSTER_PROJECT="${GKE_CLUSTER_PROJECT:?Missing GKE_CLUSTER_PROJECT}"
@@ -40,6 +40,18 @@ for cmd in "${required_commands[@]}"; do
     exit 1
   fi
 done
+
+# --- Ensure the GCP service account has the required IAM roles ---
+# The ADK ENTRYPOINT uses --otel_to_cloud which exports OpenTelemetry traces/logs
+# to Cloud Logging and Cloud Trace. This requires:
+#   - roles/logging.logWriter   (logging.logEntries.create)
+#   - roles/cloudtrace.agent    (cloudtrace.traces.patch)
+echo "Ensuring GCP GKE SA has logging IAM role"
+echo "+ gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT --member=serviceAccount:$GKE_SERVICE_ACCOUNT --role=roles/logging.logWriter"
+gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+  --member="serviceAccount:$GKE_SERVICE_ACCOUNT" \
+  --role="roles/logging.logWriter" \
+  --quiet
 
 required_runtime_vars=(GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID GCS_BUCKET)
 for var_name in "${required_runtime_vars[@]}"; do
