@@ -44,7 +44,7 @@ from google.adk.tools.bigquery import BigQueryToolset, BigQueryCredentialsConfig
 # --- Configuration ---
 PROJECT_ID = os.environ.get("GOOGLE_CLOUD_PROJECT", "your-gcp-project-id")
 DATASET_ID = os.environ.get("BIG_QUERY_DATASET_ID", "your-big-query-dataset-id")
-LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "US") # default location is US in the plugin
+LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "US")
 GCS_BUCKET = os.environ.get("GCS_BUCKET", "your-gcs-bucket") # Optional
 
 if PROJECT_ID == "your-gcp-project-id":
@@ -56,7 +56,7 @@ os.environ['GOOGLE_CLOUD_LOCATION'] = LOCATION
 os.environ['GOOGLE_GENAI_USE_VERTEXAI'] = 'True'
 
 
-# --- Initialize the Plugin with Config ---
+# --- Initialize the BQ Agent Analytics Plugin ---
 bq_config = BigQueryLoggerConfig(
     enabled=True,
     gcs_bucket_name=GCS_BUCKET, # Enable GCS offloading for multimodal content
@@ -69,12 +69,12 @@ bq_config = BigQueryLoggerConfig(
 bq_agent_analytics_plugin = BigQueryAgentAnalyticsPlugin(
     project_id=PROJECT_ID,
     dataset_id=DATASET_ID,
-    table_id="agent_events", # default table name is agent_events
+    table_id="agent_events",
     config=bq_config,
     location=LOCATION
 )
 
-# --- Initialize Tools and Model ---
+# --- Initialize BigQuery Toolset ---
 credentials, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
 bigquery_toolset = BigQueryToolset(
     credentials_config=BigQueryCredentialsConfig(credentials=credentials)
@@ -83,8 +83,8 @@ bigquery_toolset = BigQueryToolset(
 llm = Gemini(model="gemini-2.5-flash")
 
 root_agent = Agent(
-    model=llm,
     name='my_bq_agent',
+    model=llm,
     instruction="You are a helpful assistant with access to BigQuery tools.",
     tools=[bigquery_toolset]
 )
