@@ -250,26 +250,28 @@ kubectl set env deployment/bartek-adk-agent -n ${GKE_NAMESPACE} \
 kubectl rollout status deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
 ```
 
-### 5. Grant Vertex AI permissions (one-time, already done ✅)
+### 5. Grant IAM roles for the GKE service account (one-time)
 
 The pod uses Workload Identity with K8s SA mapped to GCP SA:
 `${GKE_SERVICE_ACCOUNT}`
 
-This SA needs the `Vertex AI User` role on project `${GOOGLE_CLOUD_PROJECT}` to call the Gemini model:
+The `deploy_gke.sh` script grants all required roles automatically. For reference, these are the roles and why they're needed:
+
+| Role | Purpose | Error if missing |
+|---|---|---|
+| `roles/aiplatform.user` | Vertex AI / Gemini model access | `Permission 'aiplatform.endpoints.predict' denied` |
+| `roles/bigquery.dataEditor` | BigQuery table access for `BigQueryAgentAnalyticsPlugin` | `Permission bigquery.tables.get denied` |
+| `roles/bigquery.jobUser` | BigQuery job creation for analytics plugin views | `User does not have bigquery.jobs.create permission` |
+| `roles/cloudtrace.agent` | Cloud Trace export (`--otel_to_cloud`); includes `telemetry.traces.write` | `Permission 'telemetry.traces.write' denied` |
+| `roles/logging.logWriter` | Cloud Logging export (`--otel_to_cloud`) | `Permission 'logging.logEntries.create' denied` |
+
+Manual commands (if not using the script):
 
 ```bash
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
   --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
   --role="roles/aiplatform.user"
-```
 
-### 6. Grant BigQuery permissions (one-time)
-
-The `BigQueryAgentAnalyticsPlugin` (in `bartek_adk_agent/agent.py`) and `BigQueryToolset` (in `my_bq_agent/agent.py`)
-both need BigQuery access. The same Workload Identity SA needs `BigQuery Data Editor` and `BigQuery Job User`
-roles on project `${GOOGLE_CLOUD_PROJECT}`:
-
-```bash
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
   --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
   --role="roles/bigquery.dataEditor"
@@ -277,9 +279,26 @@ gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
 gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
   --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
   --role="roles/bigquery.jobUser"
+
+gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+  --role="roles/cloudtrace.agent"
+
+gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
+  --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+  --role="roles/logging.logWriter"
 ```
 
-### 7. Verify deployment
+Verify assigned roles:
+
+```bash
+gcloud projects get-iam-policy ${GOOGLE_CLOUD_PROJECT} \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+  --format="table(bindings.role)"
+```
+
+### 6. Verify deployment
 
 ```bash
 kubectl get deployments -n ${GKE_NAMESPACE}
@@ -289,7 +308,7 @@ kubectl get pods -n ${GKE_NAMESPACE}
 kubectl logs -f deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
 ```
 
-### 8. Port-forward to test locally
+### 7. Port-forward to test locally
 
 ```bash
 kubectl port-forward svc/bartek-adk-agent 8000:80 -n ${GKE_NAMESPACE}
@@ -303,7 +322,7 @@ External URL (via Istio VirtualService):
 https://bartek-adk-agent-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
 ```
 
-### 9. Update deployment (after pushing a new image)
+### 8. Update deployment (after pushing a new image)
 
 ```bash
 kubectl rollout restart deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
@@ -437,18 +456,14 @@ the GCP Trace Explorer.
 
    ```bash
    gcloud services enable cloudtrace.googleapis.com --project ${GOOGLE_CLOUD_PROJECT}
+   gcloud services enable logging.googleapis.com --project ${GOOGLE_CLOUD_PROJECT}
+   gcloud services enable telemetry.googleapis.com --project ${GOOGLE_CLOUD_PROJECT}
    ```
 
 2. **Grant `roles/cloudtrace.agent`** to the identity that writes traces:
 
    - **Local (ADC):** your user account (already granted via `roles/owner` or `roles/editor`).
-   - **GKE (Workload Identity):** the GKE service account:
-
-     ```bash
-     gcloud projects add-iam-policy-binding ${GOOGLE_CLOUD_PROJECT} \
-       --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
-       --role="roles/cloudtrace.agent"
-     ```
+   - **GKE (Workload Identity):** already covered in [step 5 above](#5-grant-iam-roles-for-the-gke-service-account-one-time).
 
 3. **Install the GenAI instrumentation package** (for Gemini call spans with token counts):
 

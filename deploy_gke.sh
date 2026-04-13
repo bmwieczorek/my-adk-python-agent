@@ -48,10 +48,57 @@ done
 #   - roles/cloudtrace.agent    (cloudtrace.traces.patch)
 echo "Ensuring GCP GKE SA has logging IAM role"
 echo "+ gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT --member=serviceAccount:$GKE_SERVICE_ACCOUNT --role=roles/logging.logWriter"
+
+
+# BigQuery Data Editor - Access to edit all the contents of datasets, otherwise: ERROR - bigquery_agent_analytics_plugin.py:2159 - Error checking for table project-id.bartek_adk_agent_analytics.agent_events: 403 GET https://bigquery.googleapis.com/bigquery/v2/projects/project-id/datasets/bartek_adk_agent_analytics/tables/agent_events?prettyPrint=false: Access Denied: Table project-id:bartek_adk_agent_analytics.agent_events: Permission bigquery.tables.get denied on table project-id:bartek_adk_agent_analytics.agent_events (or it may not exist).
+gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+    --member="serviceAccount:$GKE_SERVICE_ACCOUNT" \
+    --role="roles/bigquery.dataEditor" \
+    --quiet
+
+# bq add-iam-policy-binding \
+# >   --member="serviceAccount:${GKE_SERVICE_ACCOUNT}" \
+# >   --role="roles/bigquery.dataEditor" \
+# >   project-id:bartek_adk_agent_analytics
+# BigQuery error in add-iam-policy-binding operation: This feature requires allowlisting.
+
+# BigQuery Job User - Access to run jobs, otherwise: ERROR - bigquery_agent_analytics_plugin.py:2316 - Failed to create view v_user_message_received: 403 POST https://bigquery.googleapis.com/bigquery/v2/projects/project-id/jobs?prettyPrint=false: Access Denied: Project project-id: User does not have bigquery.jobs.create permission in project project-id
+gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+    --member="serviceAccount:$GKE_SERVICE_ACCOUNT" \
+    --role="roles/bigquery.jobUser" \
+    --quiet
+
+# Logs Writer - Access to write logs, otherwise: Error received: Permission \'logging.logEntries.create\' denied on resource (or it may not exist)
 gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
   --member="serviceAccount:$GKE_SERVICE_ACCOUNT" \
   --role="roles/logging.logWriter" \
   --quiet
+
+# Vertex AI User - Grants access to use all resource in Vertex AI, otherwise: google.genai.errors.ClientError: 403 PERMISSION_DENIED. {'error': {'code': 403, 'message': "Permission 'aiplatform.endpoints.predict' denied on resource '//aiplatform.googleapis.com/projects/project-id/locations/us-central1/publishers/google/models/gemini-2.5-pro'
+gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+    --member="serviceAccount:$GKE_SERVICE_ACCOUNT" \
+    --role="roles/aiplatform.user" \
+    --quiet
+
+# Skipped as better is roles/cloudtrace.agent with fewer permissions than telemetry.writer
+# Cloud Telemetry Writer - Full access to write all telemetry data, otherwise: Failed to export span batch code: 403, reason: MPermission 'telemetry.traces.write' denied on resource (or it may not exist)
+#gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+#    --member="serviceAccount:$GKE_SERVICE_ACCOUNT" \
+#    --role="roles/telemetry.writer" \
+#    --quiet
+
+# Cloud Trace Agent  - For service accounts. Provides ability to write traces by sending the data to Stackdriver Trace, includes telemetry.traces.write and cloudtrace.traces.patch, otherwise: Failed to export span batch code: 403, reason: MPermission 'telemetry.traces.write' denied on resource (or it may not exist)
+gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
+    --member="serviceAccount:$GKE_SERVICE_ACCOUNT" \
+    --role="roles/cloudtrace.agent" \
+    --quiet
+
+# Final check - list the roles the SA has to confirm
+gcloud projects get-iam-policy "$GOOGLE_CLOUD_PROJECT" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:serviceAccount:$GKE_SERVICE_ACCOUNT" \
+    --format="table(bindings.role)"
+
 
 required_runtime_vars=(GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID GCS_BUCKET)
 for var_name in "${required_runtime_vars[@]}"; do
