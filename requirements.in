@@ -8,3 +8,6 @@ pendulum
 # Pin to avoid pulling in a newer opentelemetry-api that conflicts with google-adk's constraints.
 # opentelemetry-instrumentation-google-genai>=0.7b0,<1
 opentelemetry-instrumentation-google-genai
+# A2A (Agent-to-Agent) protocol support — enables registration with
+# IBM ContextForge / Gemini Enterprise agent registries.
+a2a-sdk[http-server]

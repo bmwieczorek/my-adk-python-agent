@@ -32,6 +32,20 @@ export GKE_CLUSTER_REGION="$GKE_CLUSTER_REGION"
 export GKE_HTTP_URL_DOMAIN="${GKE_HTTP_URL_DOMAIN:?Missing GKE_HTTP_URL_DOMAIN}"
 
 GOOGLE_GENAI_USE_VERTEXAI="TRUE"
+# SERVE_MODE: "adk" (default) for ADK dev UI, "a2a" for A2A JSONRPC server
+SERVE_MODE="${SERVE_MODE:-adk}"
+# A2A_AGENT_MODULE: which agent module to serve in A2A mode
+A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_upgrade_agent.agent}"
+
+# Health-check path differs per mode:
+#   adk → "/" (web UI root)
+#   a2a → "/.well-known/agent.json" (A2A Agent Card; GET / returns 405 in JSONRPC mode)
+if [[ "$SERVE_MODE" == "a2a" ]]; then
+  HEALTH_CHECK_PATH="/.well-known/agent.json"
+else
+  HEALTH_CHECK_PATH="/"
+fi
+export SERVE_MODE A2A_AGENT_MODULE HEALTH_CHECK_PATH
 
 required_commands=(gcloud kubectl docker)
 for cmd in "${required_commands[@]}"; do
@@ -141,12 +155,14 @@ echo "+ envsubst < k8s/virtual-service.yaml | kubectl apply -n $GKE_NAMESPACE -f
 envsubst < k8s/virtual-service.yaml | kubectl apply -n "$GKE_NAMESPACE" -f -
 
 echo "Updating deployment runtime environment values"
-echo "+ kubectl set env deployment/$APP_NAME -n $GKE_NAMESPACE GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION=$GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID=$BIG_QUERY_DATASET_ID GCS_BUCKET=$GCS_BUCKET"
+echo "+ kubectl set env deployment/$APP_NAME -n $GKE_NAMESPACE GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION=$GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID=$BIG_QUERY_DATASET_ID GCS_BUCKET=$GCS_BUCKET SERVE_MODE=$SERVE_MODE A2A_AGENT_MODULE=$A2A_AGENT_MODULE"
 kubectl set env deployment/"$APP_NAME" -n "$GKE_NAMESPACE" \
   GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
   GOOGLE_CLOUD_LOCATION="$GOOGLE_CLOUD_LOCATION" \
   BIG_QUERY_DATASET_ID="$BIG_QUERY_DATASET_ID" \
-  GCS_BUCKET="$GCS_BUCKET"
+  GCS_BUCKET="$GCS_BUCKET" \
+  SERVE_MODE="$SERVE_MODE" \
+  A2A_AGENT_MODULE="$A2A_AGENT_MODULE"
 
 echo "Restarting deployment to pick up latest image and config"
 echo "+ kubectl rollout restart deployment/$APP_NAME -n $GKE_NAMESPACE"

@@ -28,6 +28,9 @@ spec:
               value: "1"
             - name: GOOGLE_GENAI_USE_VERTEXAI
               value: "TRUE"
+            # "adk" (default) for ADK dev UI, "a2a" for A2A JSONRPC server
+            - name: SERVE_MODE
+              value: "${SERVE_MODE}"
           resources:
             requests:
               cpu: "250m"
@@ -37,13 +40,14 @@ spec:
               memory: "1Gi"
           readinessProbe:
             httpGet:
-              path: /
+              # ADK mode: "/" serves the web UI; A2A mode: use "/.well-known/agent.json"
+              path: ${HEALTH_CHECK_PATH}
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: /
+              path: ${HEALTH_CHECK_PATH}
               port: 8000
             initialDelaySeconds: 15
             periodSeconds: 10

@@ -4,6 +4,8 @@ set -euo pipefail
 # Run bartek-adk-agent locally with Docker.
 # Mounts Application Default Credentials so the container can call Vertex AI,
 # BigQuery, Cloud Trace, etc. as your local identity.
+#
+# Set SERVE_MODE=a2a to start the A2A JSONRPC server instead of the ADK dev UI.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
@@ -12,6 +14,8 @@ cd "$ROOT_DIR"
 APP_NAME="bartek-adk-agent"
 HOST_PORT="${HOST_PORT:-8000}"
 CONTAINER_PORT=8000
+SERVE_MODE="${SERVE_MODE:-adk}"
+A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_upgrade_agent.agent}"
 
 # --- Required env vars (same as GKE runtime vars) ---
 required_vars=(GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID GCS_BUCKET)
@@ -38,11 +42,13 @@ docker build -t "$APP_NAME" .
 docker image prune -f
 
 # --- Run ---
-echo "Starting container: $APP_NAME on port $HOST_PORT"
+echo "Starting container: $APP_NAME on port $HOST_PORT (SERVE_MODE=$SERVE_MODE, A2A_AGENT_MODULE=$A2A_AGENT_MODULE)"
 echo "+ docker run --name $APP_NAME --rm -it -p $HOST_PORT:$CONTAINER_PORT ..."
 (docker rm -f "$APP_NAME" 2>/dev/null || true)
 docker run --name "$APP_NAME" --rm -it \
   -p "${HOST_PORT}:${CONTAINER_PORT}" \
+  -e SERVE_MODE="$SERVE_MODE" \
+  -e A2A_AGENT_MODULE="$A2A_AGENT_MODULE" \
   -e GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
   -e GOOGLE_CLOUD_LOCATION="$GOOGLE_CLOUD_LOCATION" \
   -e BIG_QUERY_DATASET_ID="$BIG_QUERY_DATASET_ID" \

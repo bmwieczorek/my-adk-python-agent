@@ -9,6 +9,8 @@ ARG GOOGLE_GENAI_USE_VERTEXAI=TRUE
 ENV PYTHONUNBUFFERED=1 \
 	GOOGLE_GENAI_USE_VERTEXAI=${GOOGLE_GENAI_USE_VERTEXAI}
 
+# Suppress google-adk A2A experimental warnings in production logs.
+ENV ADK_SUPPRESS_A2A_EXPERIMENTAL_FEATURE_WARNINGS=1
 
 # --- Dependency caching layer ---
 # This layer is cached as long as requirements-docker.txt does not change — pip install is skipped on subsequent builds when only source code changes.
@@ -20,4 +22,16 @@ RUN pip install --no-cache-dir -r requirements-docker.txt
 EXPOSE 8000
 COPY --chmod=775 . .
 
-ENTRYPOINT ["adk", "web", "--host", "0.0.0.0", "--otel_to_cloud",  "." ]
+# SERVE_MODE selects the runtime entrypoint:
+#   adk  (default) — standard ADK dev UI served by `adk web`
+#   a2a             — A2A JSONRPC server for agent-to-agent communication
+# A2A_AGENT_MODULE selects which agent module to serve in A2A mode
+#   (default: bartek_adk_agent.agent, alternative: my_upgrade_agent.agent)
+ENV SERVE_MODE=adk
+ENV A2A_AGENT_MODULE=my_upgrade_agent.agent
+
+CMD if [ "$SERVE_MODE" = "a2a" ]; then \
+      exec uvicorn a2a_server:app --host 0.0.0.0 --port 8000; \
+    else \
+      exec adk web --host 0.0.0.0 --otel_to_cloud .; \
+    fi

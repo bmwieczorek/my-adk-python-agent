@@ -2,4 +2,9 @@
 # Sor far no Vertex AI deployment APIs needed.
 google-adk
 pendulum
+# A2A (Agent-to-Agent) protocol support — enables registration with
+# IBM ContextForge / Gemini Enterprise agent registries.
+# The [http-server] extra pulls in Starlette server components used by
+# google.adk.a2a.utils.agent_to_a2a.to_a2a().
+a2a-sdk[http-server]
 
