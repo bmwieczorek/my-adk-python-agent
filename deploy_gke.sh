@@ -8,19 +8,44 @@ cd "$ROOT_DIR"
 
 # Deployment settings
 APP_NAME="bartek-adk-agent"
-AGENT_IMAGE_TAG="0.0.6"
 
-GKE_NAMESPACE="${GKE_NAMESPACE:?Missing GKE_NAMESPACE}"
-GKE_CLUSTER_PROJECT="${GKE_CLUSTER_PROJECT:?Missing GKE_CLUSTER_PROJECT}"
-GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:?Missing GKE_CLUSTER_NAME}"
-GKE_CLUSTER_REGION="${GKE_CLUSTER_REGION:?Missing GKE_CLUSTER_REGION}"
+# Auto-detect current image tag from the running pod and bump patch version.
+# If a tag is passed as $1, use that instead.
+if [[ -n "${1:-}" ]]; then
+  AGENT_IMAGE_TAG="$1"
+else
+  CURRENT_TAG=$(kubectl get deployment "$APP_NAME" -n "${GKE_NAMESPACE:-}" \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$' || echo "")
+  if [[ -n "$CURRENT_TAG" ]]; then
+    # Bump the patch version: 0.0.7 → 0.0.8
+    MAJOR="${CURRENT_TAG%%.*}"
+    REST="${CURRENT_TAG#*.}"
+    MINOR="${REST%%.*}"
+    PATCH="${REST#*.}"
+    AGENT_IMAGE_TAG="${MAJOR}.${MINOR}.$((PATCH + 1))"
+    echo "Current deployed tag: ${CURRENT_TAG} → bumping to: ${AGENT_IMAGE_TAG}"
+  else
+    AGENT_IMAGE_TAG="0.0.1"
+    echo "No existing deployment found. Using initial tag: ${AGENT_IMAGE_TAG}"
+  fi
+fi
 
-AGENT_IMAGE_REPO="${AGENT_IMAGE_REPO:?Missing AGENT_IMAGE_REPO}"
+GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:?Must set GOOGLE_CLOUD_PROJECT}"
+GKE_NAMESPACE="${GKE_NAMESPACE:?Must set GKE_NAMESPACE}"
+GKE_CLUSTER_PROJECT="${GKE_CLUSTER_PROJECT:?Must set GKE_CLUSTER_PROJECT}"
+GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:?Must set GKE_CLUSTER_NAME}"
+GKE_CLUSTER_REGION="${GKE_CLUSTER_REGION:?Must set GKE_CLUSTER_REGION}"
+
+AGENT_IMAGE_REPO="${AGENT_IMAGE_REPO:?Must set AGENT_IMAGE_REPO (e.g. registry.example.com/org/image-name)}"
 AGENT_IMAGE_URI="${AGENT_IMAGE_REPO}:${AGENT_IMAGE_TAG}"
 
-GKE_SERVICE_ACCOUNT="${GKE_SERVICE_ACCOUNT:?Missing GKE_SERVICE_ACCOUNT}"
+GKE_SERVICE_ACCOUNT="${GKE_SERVICE_ACCOUNT:?Must set GKE_SERVICE_ACCOUNT (full GCP SA email)}"
 # Derive the K8s SA name (part before '@') from the full GCP SA email
 GKE_SERVICE_ACCOUNT_NAME="${GKE_SERVICE_ACCOUNT%%@*}"
+
+GKE_HTTP_URL_DOMAIN="${GKE_HTTP_URL_DOMAIN:?Must set GKE_HTTP_URL_DOMAIN (e.g. example.com)}"
+GKE_CLUSTER_SUBDOMAIN_INFIX="${GKE_CLUSTER_SUBDOMAIN_INFIX:?Must set GKE_CLUSTER_SUBDOMAIN_INFIX (e.g. apps.cluster-name)}"
 
 # Export for envsubst (deployment.yaml uses ${AGENT_IMAGE_URI} and ${GKE_SERVICE_ACCOUNT_NAME},
 # service.yaml and virtual-service.yaml use ${GKE_NAMESPACE},
@@ -29,23 +54,50 @@ export AGENT_IMAGE_URI="$AGENT_IMAGE_URI"
 export GKE_SERVICE_ACCOUNT_NAME="$GKE_SERVICE_ACCOUNT_NAME"
 export GKE_NAMESPACE="$GKE_NAMESPACE"
 export GKE_CLUSTER_REGION="$GKE_CLUSTER_REGION"
-export GKE_HTTP_URL_DOMAIN="${GKE_HTTP_URL_DOMAIN:?Missing GKE_HTTP_URL_DOMAIN}"
+export GKE_HTTP_URL_DOMAIN="$GKE_HTTP_URL_DOMAIN"
+export GKE_CLUSTER_SUBDOMAIN_INFIX="$GKE_CLUSTER_SUBDOMAIN_INFIX"
 
 GOOGLE_GENAI_USE_VERTEXAI="TRUE"
-# SERVE_MODE: "adk" (default) for ADK dev UI, "a2a" for A2A JSONRPC server
-SERVE_MODE="${SERVE_MODE:-adk}"
-# A2A_AGENT_MODULE: which agent module to serve in A2A mode
-A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_upgrade_agent.agent}"
 
-# Health-check path differs per mode:
-#   adk → "/" (web UI root)
-#   a2a → "/.well-known/agent.json" (A2A Agent Card; GET / returns 405 in JSONRPC mode)
-if [[ "$SERVE_MODE" == "a2a" ]]; then
-  HEALTH_CHECK_PATH="/.well-known/agent.json"
-else
-  HEALTH_CHECK_PATH="/"
+# --- A2A agent module selection ---
+# A2A_AGENT_MODULE accepts a folder name (e.g. my_upgrade_agent). The ".agent"
+# suffix is appended automatically for the Python module path.
+# If not set, scan the repo and let the user pick interactively.
+if [[ -z "${A2A_AGENT_MODULE:-}" ]]; then
+  echo ""
+  echo "Scanning for available root agents..."
+  AGENT_FOLDERS=()
+  while IFS= read -r file; do
+    # Extract folder name: ./my_upgrade_agent/agent.py → my_upgrade_agent
+    folder="${file#./}"
+    folder="${folder%%/*}"
+    AGENT_FOLDERS+=("$folder")
+  done < <(grep -rl '^root_agent\s*=' --include='agent.py' . | sort)
+
+  if [[ ${#AGENT_FOLDERS[@]} -eq 0 ]]; then
+    echo "No root_agent definitions found in the repo." >&2
+    exit 1
+  fi
+
+  echo ""
+  printf "%-12s %-40s\n" "Option #" "Agent folder"
+  printf "%-12s %-40s\n" "--------" "----------------------------------------"
+  for i in "${!AGENT_FOLDERS[@]}"; do
+    printf "%-12s %-40s\n" "$((i + 1))" "${AGENT_FOLDERS[$i]}"
+  done
+  echo ""
+  read -rp "Select the agent to expose via A2A (Option #): " selection
+
+  if ! [[ "$selection" =~ ^[0-9]+$ ]] || (( selection < 1 || selection > ${#AGENT_FOLDERS[@]} )); then
+    echo "Invalid selection: $selection" >&2
+    exit 1
+  fi
+  A2A_AGENT_MODULE="${AGENT_FOLDERS[$((selection - 1))]}"
+  echo "Selected: ${A2A_AGENT_MODULE}"
+  echo ""
 fi
-export SERVE_MODE A2A_AGENT_MODULE HEALTH_CHECK_PATH
+# Append .agent suffix for the Python module path
+export A2A_AGENT_MODULE="${A2A_AGENT_MODULE}.agent"
 
 required_commands=(gcloud kubectl docker)
 for cmd in "${required_commands[@]}"; do
@@ -114,7 +166,7 @@ gcloud projects get-iam-policy "$GOOGLE_CLOUD_PROJECT" \
     --format="table(bindings.role)"
 
 
-required_runtime_vars=(GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID GCS_BUCKET)
+required_runtime_vars=(GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID GCS_BUCKET)
 for var_name in "${required_runtime_vars[@]}"; do
   if [[ -z "${!var_name:-}" ]]; then
     echo "Missing required environment variable: $var_name" >&2
@@ -155,14 +207,15 @@ echo "+ envsubst < k8s/virtual-service.yaml | kubectl apply -n $GKE_NAMESPACE -f
 envsubst < k8s/virtual-service.yaml | kubectl apply -n "$GKE_NAMESPACE" -f -
 
 echo "Updating deployment runtime environment values"
-echo "+ kubectl set env deployment/$APP_NAME -n $GKE_NAMESPACE GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION=$GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID=$BIG_QUERY_DATASET_ID GCS_BUCKET=$GCS_BUCKET SERVE_MODE=$SERVE_MODE A2A_AGENT_MODULE=$A2A_AGENT_MODULE"
-kubectl set env deployment/"$APP_NAME" -n "$GKE_NAMESPACE" \
-  GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
-  GOOGLE_CLOUD_LOCATION="$GOOGLE_CLOUD_LOCATION" \
-  BIG_QUERY_DATASET_ID="$BIG_QUERY_DATASET_ID" \
-  GCS_BUCKET="$GCS_BUCKET" \
-  SERVE_MODE="$SERVE_MODE" \
-  A2A_AGENT_MODULE="$A2A_AGENT_MODULE"
+# Runtime vars are set on both containers (adk-web and a2a share the same GCP config)
+for container in adk-web a2a; do
+  echo "+ kubectl set env deployment/$APP_NAME -n $GKE_NAMESPACE -c $container GOOGLE_CLOUD_PROJECT=$GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION=$GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID=$BIG_QUERY_DATASET_ID GCS_BUCKET=$GCS_BUCKET"
+  kubectl set env deployment/"$APP_NAME" -n "$GKE_NAMESPACE" -c "$container" \
+    GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
+    GOOGLE_CLOUD_LOCATION="$GOOGLE_CLOUD_LOCATION" \
+    BIG_QUERY_DATASET_ID="$BIG_QUERY_DATASET_ID" \
+    GCS_BUCKET="$GCS_BUCKET"
+done
 
 echo "Restarting deployment to pick up latest image and config"
 echo "+ kubectl rollout restart deployment/$APP_NAME -n $GKE_NAMESPACE"
@@ -176,4 +229,5 @@ echo "Deployment complete. Current pods:"
 echo "+ kubectl get pods -n $GKE_NAMESPACE -l app=$APP_NAME"
 kubectl get pods -n "$GKE_NAMESPACE" -l app="$APP_NAME"
 
-echo "App deployment url: https://${APP_NAME}-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
+echo "ADK Web UI:  https://${APP_NAME}-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
+echo "A2A Server:  https://${APP_NAME}-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"

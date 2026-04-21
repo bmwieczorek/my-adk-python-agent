@@ -19,19 +19,21 @@ RUN pip install --no-cache-dir -r requirements-docker.txt
 
 # --- Application code layer ---
 # This layer is rebuilt on every code change, but pip install above is cached.
-EXPOSE 8000
+EXPOSE 8000 8001
 COPY --chmod=775 . .
 
 # SERVE_MODE selects the runtime entrypoint:
 #   adk  (default) — standard ADK dev UI served by `adk web`
 #   a2a             — A2A JSONRPC server for agent-to-agent communication
+# APP_PORT controls which port the server listens on (default: 8000).
 # A2A_AGENT_MODULE selects which agent module to serve in A2A mode
 #   (default: bartek_adk_agent.agent, alternative: my_upgrade_agent.agent)
 ENV SERVE_MODE=adk
+ENV APP_PORT=8000
 ENV A2A_AGENT_MODULE=my_upgrade_agent.agent
 
 CMD if [ "$SERVE_MODE" = "a2a" ]; then \
-      exec uvicorn a2a_server:app --host 0.0.0.0 --port 8000; \
+      exec uvicorn a2a_server:app --host 0.0.0.0 --port "$APP_PORT"; \
     else \
-      exec adk web --host 0.0.0.0 --otel_to_cloud .; \
+      exec adk web --host 0.0.0.0 --port "$APP_PORT" --no-reload --otel_to_cloud .; \
     fi

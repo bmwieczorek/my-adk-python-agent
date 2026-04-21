@@ -19,18 +19,21 @@ spec:
       # The GCP SA needs 'aiplatform.endpoints.predict' permission on project ${GOOGLE_CLOUD_PROJECT}
       serviceAccountName: ${GKE_SERVICE_ACCOUNT_NAME}
       containers:
-        - name: bartek-adk-agent
+        # --- ADK Web UI (port 8000) ---
+        - name: adk-web
           image: ${AGENT_IMAGE_URI}
           ports:
             - containerPort: 8000
+              name: http-web
           env:
             - name: PYTHONUNBUFFERED
               value: "1"
             - name: GOOGLE_GENAI_USE_VERTEXAI
               value: "TRUE"
-            # "adk" (default) for ADK dev UI, "a2a" for A2A JSONRPC server
             - name: SERVE_MODE
-              value: "${SERVE_MODE}"
+              value: "adk"
+            - name: APP_PORT
+              value: "8000"
           resources:
             requests:
               cpu: "250m"
@@ -40,15 +43,58 @@ spec:
               memory: "1Gi"
           readinessProbe:
             httpGet:
-              # ADK mode: "/" serves the web UI; A2A mode: use "/.well-known/agent.json"
-              path: ${HEALTH_CHECK_PATH}
+              path: /
               port: 8000
             initialDelaySeconds: 10
             periodSeconds: 5
           livenessProbe:
             httpGet:
-              path: ${HEALTH_CHECK_PATH}
+              path: /
               port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+        # --- A2A JSONRPC Server (port 8001) ---
+        - name: a2a
+          image: ${AGENT_IMAGE_URI}
+          ports:
+            - containerPort: 8001
+              name: http-a2a
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+            - name: GOOGLE_GENAI_USE_VERTEXAI
+              value: "TRUE"
+            - name: SERVE_MODE
+              value: "a2a"
+            - name: APP_PORT
+              value: "8001"
+            - name: A2A_AGENT_MODULE
+              value: "${A2A_AGENT_MODULE}"
+            # Public-facing A2A metadata (agent card URL).
+            # These control what the agent card advertises — not the listen port.
+            - name: A2A_PORT
+              value: "443"
+            - name: A2A_PROTOCOL
+              value: "https"
+            - name: A2A_HOST
+              value: "bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "1Gi"
+          readinessProbe:
+            httpGet:
+              path: /.well-known/agent-card.json
+              port: 8001
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /.well-known/agent-card.json
+              port: 8001
             initialDelaySeconds: 15
             periodSeconds: 10
 

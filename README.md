@@ -197,7 +197,7 @@ The A2A mode is implemented via Google ADK's built-in
 utility (`google.adk.a2a.utils.agent_to_a2a`), which wraps the existing
 `root_agent` as a Starlette/ASGI application. It:
 
-- Serves an **Agent Card** at `GET /.well-known/agent.json` — the standard A2A
+- Serves an **Agent Card** at `GET /.well-known/agent-card.json` — the standard A2A
   discovery endpoint. The card is **auto-generated** from the agent's `name`,
   `description`, `instruction`, and `tools` (including `get_currency_rate` and
   `get_current_time`, which are exposed as A2A *skills*).
@@ -232,7 +232,7 @@ A2A_AGENT_MODULE=bartek_adk_agent.agent uvicorn a2a_server:app --host 0.0.0.0 --
 Verify the Agent Card:
 
 ```bash
-curl http://localhost:8000/.well-known/agent.json | python3 -m json.tool
+curl http://localhost:8000/.well-known/agent-card.json | python3 -m json.tool
 ```
 
 Send a test message:
@@ -318,18 +318,25 @@ host machine you must use a special DNS name:
 └───────────────────────────────────────────┘
 ```
 
-#### 1. Start ContextForge with Podman
+#### 1. Start ContextForge with Docker/Podman
 
 ```bash
-podman run -d --name mcpgateway \
+# Create the host file first so Docker mounts it as a file, not a directory
+touch ./ibm-context-forge/mcp.db
+
+docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
   -e DATABASE_URL=sqlite:///./mcp.db \
+  -v $(pwd)/ibm-context-forge/mcp.db:/app/mcp.db \
   -e MCPGATEWAY_UI_ENABLED=true \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e MCPGATEWAY_A2A_ENABLED=true \
   -e MCPGATEWAY_A2A_METRICS_ENABLED=true \
-  -e MCPGATEWAY_A2A_DEFAULT_TIMEOUT=30 \
+  -e MCPGATEWAY_A2A_DEFAULT_TIMEOUT=300 \
+  -e MCP_TOOL_CALL_TIMEOUT=300 \
+  -e TOOL_TIMEOUT=300 \
+  -e MCPGATEWAY_UI_TOOL_TEST_TIMEOUT=300000 \
   -e MCPGATEWAY_A2A_MAX_RETRIES=3 \
   -e SSRF_ALLOW_LOCALHOST=true \
   -e SSRF_ALLOW_PRIVATE_NETWORKS=true \
@@ -342,9 +349,28 @@ podman run -d --name mcpgateway \
   ghcr.io/ibm/mcp-context-forge:v1.0.0-RC-3
 ```
 
-> **Note:** The image tag is `v1.0.0-RC-3` (with the `v` prefix).
-> `SSRF_ALLOW_LOCALHOST` and `SSRF_ALLOW_PRIVATE_NETWORKS` must be `true` for
-> local testing so ContextForge can reach your agent on the host.
+> **Notes:**
+> - The image tag is `v1.0.0-RC-3` (with the `v` prefix).
+> - `SSRF_ALLOW_LOCALHOST` and `SSRF_ALLOW_PRIVATE_NETWORKS` must be `true` for
+>   local testing so ContextForge can reach your agent on the host.
+> - The volume mount persists the SQLite DB across container restarts. The host
+>   file must exist before starting (`touch` above) — otherwise Docker creates a
+>   directory instead.
+> - All `*_TIMEOUT` values are in **seconds** except
+>   `MCPGATEWAY_UI_TOOL_TEST_TIMEOUT` which is in **milliseconds**.
+
+#### Persisting the SQLite database
+
+By default, `DATABASE_URL=sqlite:///./mcp.db` stores the database **inside
+the container** at `/app/mcp.db`. When the container is removed, all
+registered agents, tokens, and configuration are lost.
+
+The volume mount `-v $(pwd)/ibm-context-forge/mcp.db:/app/mcp.db` in the
+command above handles persistence. To inspect the database on the host:
+
+```bash
+sqlite3 ./ibm-context-forge/mcp.db ".tables"
+```
 
 Verify it's running:
 
@@ -803,13 +829,13 @@ Example response:
 
 ```bash
 # Stream all logs (follow mode)
-podman logs -f mcpgateway
+docker logs -f mcpgateway
 
 # Last 100 lines
-podman logs --tail 100 mcpgateway
+docker logs --tail 100 mcpgateway
 
-# Logs since a specific time
-podman logs --since 5m mcpgateway
+  # Logs since a specific time
+docker logs --since 5m mcpgateway
 ```
 
 #### 9. Cleanup
@@ -818,8 +844,10 @@ podman logs --since 5m mcpgateway
 podman rm -f mcpgateway
 ```
 
-> **Tip:** The SQLite DB is ephemeral (inside the container). After restarting
-> ContextForge you need to generate a new token and re-register agents.
+> **Tip:** The SQLite DB is ephemeral (inside the container) by default. After
+> restarting ContextForge you need to generate a new token and re-register
+> agents. See [Persisting the SQLite database](#persisting-the-sqlite-database)
+> to mount the DB file on the host.
 
 ### Environment variables
 
@@ -849,7 +877,6 @@ export GKE_CLUSTER_PROJECT=...
 export GKE_CLUSTER_NAME=...
 export GKE_CLUSTER_REGION=...
 export AGENT_IMAGE_REPO=...
-export AGENT_IMAGE_URI=...                 # e.g. ${AGENT_IMAGE_REPO}:0.0.3
 export GKE_SERVICE_ACCOUNT=...             # GCP SA email (e.g. name@project.iam.gserviceaccount.com); K8s SA name is derived as part before '@'
 export GKE_HTTP_URL_DOMAIN=...             # e.g. example.com
 
@@ -857,9 +884,59 @@ export GKE_HTTP_URL_DOMAIN=...             # e.g. example.com
 ./deploy_gke.sh
 ```
 
+#### Image tag auto-increment
+
+The script automatically detects the current image tag from the running
+deployment and bumps the patch version:
+
+```bash
+# Auto-bump: queries running pod, e.g. 0.0.7 → deploys 0.0.8
+./deploy_gke.sh
+
+# Explicit tag: skips auto-detection
+./deploy_gke.sh 1.0.0
+```
+
+If no existing deployment is found, the script defaults to `0.0.1`.
+
+To check the current image tag of the running pod:
+
+```bash
+kubectl get pod -n ${GKE_NAMESPACE} -l app=bartek-adk-agent \
+  -o jsonpath='{.items[0].spec.containers[0].image}'
+```
+
 You can put these exports in `.bash_profile` and open a new terminal before running the script.
 
 The script expects `GCS_BUCKET` directly.
+
+#### A2A agent selection
+
+The script scans the repo for agent folders containing a `root_agent`
+definition and presents an interactive picker:
+
+```
+Scanning for available root agents...
+
+Option #     Agent folder
+--------     ----------------------------------------
+1            bartek_adk_agent
+2            my_bq_agent
+3            my_multi_agent
+4            my_upgrade_agent
+
+Select the agent to expose via A2A (Option #): 3
+Selected: my_multi_agent
+```
+
+The `.agent` suffix is appended automatically (e.g. `my_multi_agent` →
+`my_multi_agent.agent`).
+
+To skip the interactive picker, set `A2A_AGENT_MODULE` before running:
+
+```bash
+A2A_AGENT_MODULE=my_multi_agent ./deploy_gke.sh
+```
 
 ### 1. Authenticate with GCP and GKE
 
@@ -885,11 +962,49 @@ kubectl create namespace ${GKE_NAMESPACE}
 
 ### 4. Deploy to the specific namespace
 
-Traffic flow between browser and pod:
+Traffic flow between browser/agent and pod:
 
 ```
-Browser → Istio Gateway → VirtualService → Service (ClusterIP) → Pod
+Browser → Istio Gateway → VirtualService → Service (ClusterIP, port 8000) → Pod (adk-web container)
+A2A Client → Istio Gateway → VirtualService → Service (ClusterIP, port 8001) → Pod (a2a container)
 ```
+
+#### Sidecar architecture
+
+A single pod runs **two containers** (sidecar pattern) from the same Docker
+image, each with a different `SERVE_MODE` and port:
+
+| Container | SERVE_MODE | Port | Purpose |
+|-----------|------------|------|---------|
+| `adk-web` | `adk` | 8000 | ADK dev web UI for human interaction |
+| `a2a` | `a2a` | 8001 | A2A JSONRPC server for agent-to-agent communication |
+
+```
+┌─── Pod (1 replica) ───────────────────────────────────┐
+│                                                       │
+│  ┌─── adk-web container ────┐  ┌─── a2a container ──┐ │
+│  │ SERVE_MODE=adk           │  │ SERVE_MODE=a2a     │ │
+│  │ APP_PORT=8000            │  │ APP_PORT=8001      │ │
+│  │ Health: GET /            │  │ Health: GET        │ │
+│  │                          │  │ /.well-known/      │ │
+│  │ adk web --port 8000      │  │ agent-card.json    │ │
+│  │   --no-reload            │  │                    │ │
+│  │   --otel_to_cloud        │  │ uvicorn :8001      │ │
+│  └──────────────────────────┘  └────────────────────┘ │
+│         ▲                             ▲               │
+└─────────┼─────────────────────────────┼───────────────┘
+          │                             │
+    Service :8000                 Service :8001
+    (http-web)                    (http-a2a)
+          │                             │
+    VirtualService              VirtualService
+    host: bartek-adk-agent-*    host: bartek-adk-agent-a2a-*
+```
+
+Both containers share the same GCP config (Workload Identity, runtime env
+vars) but are independently health-checked. If either container fails, the
+pod becomes unready — this is an accepted trade-off of the sidecar pattern
+vs. two separate deployments.
 
 Kubernetes resources overview:
 
@@ -908,17 +1023,19 @@ envsubst < k8s/deployment.yaml | kubectl apply -n ${GKE_NAMESPACE} -f -
 envsubst < k8s/service.yaml | kubectl apply -n ${GKE_NAMESPACE} -f -
 envsubst < k8s/virtual-service.yaml | kubectl apply -n ${GKE_NAMESPACE} -f -
 
-# Runtime values passed to the Deployment via kubectl set env
+# Runtime values passed to both containers via kubectl set env
 export GOOGLE_CLOUD_PROJECT=...
 export GOOGLE_CLOUD_LOCATION=...
 export BIG_QUERY_DATASET_ID=...
 export GCS_BUCKET=...
 
-kubectl set env deployment/bartek-adk-agent -n ${GKE_NAMESPACE} \
-  GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}" \
-  GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}" \
-  BIG_QUERY_DATASET_ID="${BIG_QUERY_DATASET_ID}" \
-  GCS_BUCKET="${GCS_BUCKET}"
+for container in adk-web a2a; do
+  kubectl set env deployment/bartek-adk-agent -n ${GKE_NAMESPACE} -c ${container} \
+    GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT}" \
+    GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION}" \
+    BIG_QUERY_DATASET_ID="${BIG_QUERY_DATASET_ID}" \
+    GCS_BUCKET="${GCS_BUCKET}"
+done
 
 kubectl rollout status deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
 ```
@@ -978,27 +1095,163 @@ kubectl get deployments -n ${GKE_NAMESPACE}
 kubectl get svc -n ${GKE_NAMESPACE}
 kubectl get virtualservices -n ${GKE_NAMESPACE}
 kubectl get pods -n ${GKE_NAMESPACE}
-kubectl logs -f deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
+
+# Check both containers are ready (READY should show 2/2)
+kubectl get pods -n ${GKE_NAMESPACE} -l app=bartek-adk-agent
+
+# Logs for each container
+kubectl logs -f deployment/bartek-adk-agent -n ${GKE_NAMESPACE} -c adk-web
+kubectl logs -f deployment/bartek-adk-agent -n ${GKE_NAMESPACE} -c a2a
 ```
 
 ### 7. Port-forward to test locally
 
 ```bash
-kubectl port-forward svc/bartek-adk-agent 8000:80 -n ${GKE_NAMESPACE}
+# ADK Web UI
+kubectl port-forward svc/bartek-adk-agent 8000:8000 -n ${GKE_NAMESPACE}
+
+# A2A Server
+kubectl port-forward svc/bartek-adk-agent 8001:8001 -n ${GKE_NAMESPACE}
 ```
 
-Then open http://localhost:8000 in your browser.
+Then open http://localhost:8000 in your browser (ADK Web UI)
+or test A2A at http://localhost:8001/.well-known/agent-card.json.
 
-External URL (via Istio VirtualService):
+External URLs (via Istio VirtualService):
 
 ```
-https://bartek-adk-agent-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
+ADK Web UI:  https://bartek-adk-agent-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
+A2A Server:  https://bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
 ```
 
-### 8. Update deployment (after pushing a new image)
+#### Testing A2A via curl
+
+Fetch the Agent Card:
 
 ```bash
-kubectl rollout restart deployment/bartek-adk-agent -n ${GKE_NAMESPACE}
+curl -s https://<A2A_EXTERNAL_URL>/.well-known/agent-card.json | python3 -m json.tool
+```
+
+Send a message (JSON-RPC `message/send`):
+
+```bash
+curl -s -X POST https://<A2A_EXTERNAL_URL> \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "messageId": "msg-001",
+        "role": "user",
+        "parts": [
+          {
+            "kind": "text",
+            "text": "Your prompt here"
+          }
+        ]
+      }
+    }
+  }' | python3 -m json.tool
+```
+
+To extract only the relevant parts of the response (status, token usage, tools called, and
+final text) — filtering out noise like `adk_thought_signature` and truncating large data
+fields — pipe through `jq`:
+
+```bash
+A2A_URL="https://bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
+
+curl -s -X POST "${A2A_URL}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "messageId": "msg-001",
+        "role": "user",
+        "parts": [{"kind": "text", "text": "upgrade the Apache Beam and related dependencies in https://github.com/bmwieczorek/my-apache-beam-dataflow/blob/master/pom.xml"}]
+      }
+    }
+  }' | jq '{
+    status:      .result.status.state,
+    timestamp:   .result.status.timestamp,
+    token_usage: (.result.metadata.adk_usage_metadata | {
+      prompt_tokens:   .promptTokenCount,
+      cached_tokens:   .cachedContentTokenCount,
+      response_tokens: .candidatesTokenCount,
+      total_tokens:    .totalTokenCount
+    }),
+    tools_called: [
+      .result.history[]
+      | select(.parts[0].metadata.adk_type == "function_call")
+      | {
+          tool: .parts[0].data.name,
+          args: (.parts[0].data.args | tostring | .[0:100])
+        }
+    ],
+    response: .result.artifacts[0].parts[0].text
+  }'
+```
+
+Expected output (XML comment lines removed from diff):
+
+```json
+{
+  "status": "completed",
+  "timestamp": "2026-04-21T18:40:44.137025+00:00",
+  "token_usage": {
+    "prompt_tokens": 44656,
+    "cached_tokens": 32266,
+    "response_tokens": 676,
+    "total_tokens": 45538
+  },
+  "tools_called": [
+    { "tool": "fetch_pom_xml",                         "args": "{\"url\":\"https://raw.githubusercontent.com/bmwieczorek/my-apache-beam-data" },
+    { "tool": "get_bom_managed_versions",               "args": "{\"beam_version\":\"2.72.0\"}" },
+    { "tool": "get_latest_maven_version_from_metadata", "args": "{\"group_id\":\"org.slf4j\",\"artifact_id\":\"slf4j-api\"}" },
+    { "tool": "get_latest_maven_version_from_metadata", "args": "{\"group_id\":\"org.apache.avro\",\"artifact_id\":\"avro\"}" },
+    { "tool": "get_latest_maven_version_from_metadata", "args": "{\"group_id\":\"org.apache.parquet\",\"artifact_id\":\"parquet-common\"}" },
+    { "tool": "upgrade_pom_xml",                       "args": "{\"upgrades\":[{\"property\":\"slf4j.version\",\"new_version\":\"2.0.17\"" },
+    { "tool": "generate_diff",                         "args": "{\"original_pom_xml\":\"<project xmlns=\\\"http://maven.apache.org/POM/4.0" }
+  ],
+  "response": "I have successfully upgraded the dependencies in the `pom.xml` file. Here is a summary of the changes:\n\n| Dependency | Old Version | New Version | Source |\n|---|---|---|---|\n| slf4j.version | 2.0.16 | 2.0.17 | Maven Central |\n| avro.version | 1.11.4 | 1.12.1 | Maven Central |\n| parquet.version | 1.15.2 | 1.17.0 | Maven Central |\n\nThe `beam.version` is already at the latest version of `2.72.0`, so no upgrade was needed.\n\nHere is the diff of the changes applied to the `pom.xml`:\n```diff\n--- pom.xml (original)\n+++ pom.xml (upgraded)\n-        <slf4j.version>2.0.16</slf4j.version>\n+        <slf4j.version>2.0.17</slf4j.version>\n-        <avro.version>1.11.4</avro.version>\n-        <parquet.version>1.15.2</parquet.version>\n+        <avro.version>1.12.1</avro.version>\n+        <parquet.version>1.17.0</parquet.version>\n```"
+}
+```
+
+For streaming responses, use `message/sendStream` with unbuffered output:
+
+```bash
+curl -s -N -X POST https://<A2A_EXTERNAL_URL> \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "id": "1",
+    "method": "message/sendStream",
+    "params": {
+      "message": {
+        "messageId": "msg-002",
+        "role": "user",
+        "parts": [{"kind": "text", "text": "Your prompt here"}]
+      }
+    }
+  }'
+```
+
+> **Note:** Each `messageId` must be a unique string (e.g. a UUID). The `-N` flag
+> disables curl output buffering so SSE events appear in real time.
+
+### 8. Update deployment (after code changes)
+
+```bash
+# Auto-bumps image tag (e.g. 0.0.7 → 0.0.8), rebuilds, pushes, and redeploys
+./deploy_gke.sh
+
+# Or with an explicit tag
+./deploy_gke.sh 1.0.0
 ```
 
 ## BigQuery Agent Analytics
@@ -1418,10 +1671,10 @@ the A2A JSONRPC endpoints are served at the root.
 
 ```bash
 # Via adk web (multi-agent — card per app):
-curl -s http://localhost:8000/.well-known/agent.json | python3 -m json.tool
+curl -s http://localhost:8000/.well-known/agent-card.json | python3 -m json.tool
 
 # Via standalone a2a_server.py:
-curl -s http://localhost:8000/.well-known/agent.json | python3 -m json.tool
+curl -s http://localhost:8000/.well-known/agent-card.json | python3 -m json.tool
 ```
 
 #### Send a message via A2A JSONRPC
@@ -1455,7 +1708,7 @@ Think of it as **Postman for A2A agents**.
 
 | Feature | Description |
 |---------|-------------|
-| **Agent Card viewer** | Fetches and displays `/.well-known/agent.json` |
+| **Agent Card viewer** | Fetches and displays `/.well-known/agent-card.json` |
 | **Spec compliance checks** | Validates the agent card against the A2A specification |
 | **Live chat** | Chat interface to send/receive messages with the agent |
 | **Debug console** | Slide-out panel showing raw JSON-RPC 2.0 request/response traffic |

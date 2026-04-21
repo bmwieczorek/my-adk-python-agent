@@ -61,7 +61,159 @@ root_agent (LlmAgent: flight_search_orchestrator, gemini-2.5-flash)
             ← peer of flight_search_and_summary_agent; handles "book #1" / "yes" / "no"
 ```
 
-## 3. Where each part is implemented
+## 3. Why a flat agent structure is not possible
+
+An intuitive first design would be a flat tree where `root_agent` directly
+orchestrates four peer sub-agents:
+
+```
+root_agent (LlmAgent)                    ← DOES NOT WORK
+├── validation_agent
+├── flight_search_agent (parallel)
+├── summary_agent
+└── booking_agent
+```
+
+This flat layout **fails** due to several ADK framework constraints:
+
+### 3.1 LlmAgent turn boundary rule
+
+A **turn** is the complete processing cycle between one user message and the
+response the user sees. Within a turn, three things can happen:
+
+| Action during a turn | Ends the turn? | What happens next |
+|---|---|---|
+| **Tool call** | ❌ No | Tool result returns to the **same agent** in the same turn. The agent keeps reasoning. |
+| **Transfer to sub-agent** | ❌ No | Control moves to the target agent within the same turn. |
+| **Text output** (by any LlmAgent) | ✅ **Yes** | The ADK runtime delivers the text to the user and **stops processing**. The next turn starts only when the user sends a new message. |
+
+This is enforced by the ADK runtime, not by the LLM — no prompt or model
+choice can change it.
+
+#### Example: what works in one turn
+
+```
+User: "WAW to KRK tomorrow"
+                                          ┌─── SINGLE TURN ──────────────────────┐
+root_agent                                │                                       │
+  ├─ transfer → validation_agent          │  (no text yet — turn continues)       │
+  │    ├─ tool call: get_current_date()   │  → returns {today, tomorrow}          │
+  │    ├─ tool call: validate_date(...)   │  → returns {valid: true}              │
+  │    ├─ tool call: validate_route(...)  │  → returns {valid: true}              │
+  │    └─ transfer → flight_search_and_summary_agent (SequentialAgent)            │
+  │         ├─ step 1: ParallelAgent      │                                       │
+  │         │    ├─ airline_a: tool call   │  → returns flights[]                  │
+  │         │    └─ airline_b: tool call   │  → returns flights[]                  │
+  │         └─ step 2: summary_agent      │                                       │
+  │              └─ TEXT: "| Option # |…" │  ← TURN ENDS HERE                     │
+                                          └───────────────────────────────────────┘
+User sees: the flight results table
+```
+
+All tool calls and transfers happen **within the same turn**. The turn only
+ends when `summary_agent` produces the table text.
+
+#### Example: what breaks with a flat structure
+
+```
+User: "WAW to KRK tomorrow"
+                                          ┌─── TURN 1 ───────────────────────────┐
+root_agent                                │                                       │
+  └─ transfer → validation_agent          │                                       │
+       ├─ tool call: validate_route(...)  │  → returns {valid: true}              │
+       └─ TEXT: "Route is valid,          │  ← TURN ENDS HERE                     │
+               searching flights…"        │                                       │
+                                          └───────────────────────────────────────┘
+User sees: "Route is valid, searching flights…"
+           (but NO flights are actually searched yet!)
+
+         ⚠️ The user must now send ANOTHER message to trigger the next agent.
+
+User: "ok" (or any message)
+                                          ┌─── TURN 2 ───────────────────────────┐
+root_agent                                │                                       │
+  └─ transfer → flight_search_agent       │                                       │
+       └─ TEXT: flights JSON              │  ← TURN ENDS HERE                     │
+                                          └───────────────────────────────────────┘
+User sees: raw flight data (but no summary table yet!)
+
+         ⚠️ Yet another message needed…
+
+User: "show me the table"
+                                          ┌─── TURN 3 ───────────────────────────┐
+root_agent                                │                                       │
+  └─ transfer → summary_agent             │                                       │
+       └─ TEXT: "| Option # | Flight # |…"│  ← TURN ENDS HERE                    │
+                                          └───────────────────────────────────────┘
+User sees: the table (after 3 messages instead of 1)
+```
+
+In the flat structure, each `LlmAgent` that produces text **kills the turn**.
+What should be a single user request ("search WAW→KRK tomorrow") becomes a
+three-message conversation. `SequentialAgent` and `ParallelAgent` solve this
+because they are **workflow agents** — they do not produce text themselves,
+they simply run their children in order (or in parallel) and the turn only
+ends when the final child emits text.
+
+### 3.2 LlmAgent cannot enforce execution order
+
+`LlmAgent.sub_agents` is a list of **transfer targets**, not a pipeline.
+The LLM picks which sub-agent to call based on descriptions and conversation
+context. There is no guarantee that:
+
+1. `flight_search_agent` runs **after** `validation_agent` completes.
+2. `summary_agent` runs **after** `flight_search_agent` completes.
+
+The LLM could skip validation, call summary before search results exist, or
+re-run agents out of order.
+
+### 3.3 SequentialAgent solves ordering but re-runs all children
+
+`SequentialAgent` guarantees strict step ordering (search → summary), but it
+**re-runs all children on every new user message**. If `booking_agent` were
+inside the `SequentialAgent`, every "book #1" or "yes" follow-up would
+re-trigger the entire parallel search + summary pipeline — wasteful and
+incorrect.
+
+### 3.4 The chosen architecture and why it works
+
+The current nested structure solves all three problems:
+
+```
+root_agent (LlmAgent)
+└── validation_agent (LlmAgent)
+    ├── flight_search_and_summary_agent (SequentialAgent)
+    │   ├── parallel_flight_search_agent (ParallelAgent)
+    │   └── summary_agent (LlmAgent)
+    └── booking_agent (LlmAgent)
+```
+
+| Problem | Solution |
+|---|---|
+| Turn boundary stops flow | `SequentialAgent` chains search → summary **within one turn** (no text output until summary) |
+| No guaranteed execution order | `SequentialAgent` enforces step 1 (parallel search) completes before step 2 (summary) |
+| Re-run on every message | `booking_agent` is a **peer** of the `SequentialAgent`, so follow-up messages route directly to it without re-running search |
+| Validation before search | `validation_agent` (LlmAgent) uses tools to validate, then **transfers** to the pipeline only when valid |
+
+This is the minimum nesting depth that satisfies all ADK constraints while
+keeping each agent focused on a single responsibility.
+
+### 3.5 Can better prompting or a stronger model fix the flat structure?
+
+**No.** These are ADK **framework-level constraints**, not LLM reasoning
+limitations. Model quality (e.g. `gemini-2.5-flash` vs `gemini-2.5-pro`)
+is irrelevant for problems 3.1 and 3.3:
+
+| Problem | Can prompting / better model fix it? | Why |
+|---|---|---|
+| Turn boundary rule (3.1) | ❌ No | The ADK runtime ends the turn when a sub-agent produces text. This is hardcoded in the SDK — no LLM can override it. |
+| Execution order (3.2) | ⚠️ Partially | Stronger prompts and models improve reliability but ordering remains **probabilistic**. `SequentialAgent` makes it **deterministic**. |
+| SequentialAgent re-run (3.3) | ❌ No | The framework always re-runs all children on each new message. No prompt can change this. |
+
+The nested architecture uses the right ADK primitives (`SequentialAgent`,
+`ParallelAgent`) to enforce what prompts alone cannot guarantee.
+
+## 4. Where each part is implemented
 
 - Root orchestrator: `my_multi_agent/agent.py`
 - Validation and routing: `my_multi_agent/validation_agent/agent.py`
@@ -77,7 +229,7 @@ root_agent (LlmAgent: flight_search_orchestrator, gemini-2.5-flash)
   - Exports: `booking_agent` (LlmAgent, selection/confirmation/book_flight)
 - Behavior constants and use cases: `my_multi_agent/requirements_spec.py`
 
-## 4. Per-use-case sequence flow diagrams
+## 5. Per-use-case sequence flow diagrams
 
 Each diagram below corresponds to a `USE_CASE_*` in `requirements_spec.py`.
 
@@ -248,7 +400,7 @@ User            root_agent       validation_agent     flight_search_and_     par
 **Routing:** root → validation_agent → before_agent_callback intercepts "show routes" → deterministic response (no LLM call).
 **Key:** After seeing routes, user continues with a normal search — same flow as USE_CASE_1_SUCCESS from step 2 onward.
 
-## 5. Input-driven routing rules
+## 6. Input-driven routing rules
 
 | User input type | Responsible agent | What happens |
 |---|---|---|
@@ -256,13 +408,13 @@ User            root_agent       validation_agent     flight_search_and_     par
 | Route help (`show routes`, `show supported routes`, `show available routes`) | `validation_agent` | Return supported routes directly and stop |
 | Selection/booking follow-up (`#1`, `book #1`, `SP526`, `yes`, `no`) | `booking_agent` | Stay in booking flow, no airline search |
 
-## 6. Why this avoids wrong calls
+## 7. Why this avoids wrong calls
 
 - Selection messages never go to airline agents.
 - Route-help messages never trigger parallel search.
 - Validation errors stop before search starts.
 
-## 7. Locking rules (how to keep flow inside the right agent)
+## 8. Locking rules (how to keep flow inside the right agent)
 
 ### Current lock settings
 
@@ -276,7 +428,7 @@ User            root_agent       validation_agent     flight_search_and_     par
 
 These settings are the primary guardrails that prevent unintended handoffs.
 
-## 8. Sequential vs parallel: how to tell and how waiting works
+## 9. Sequential vs parallel: how to tell and how waiting works
 
 ### Sequential execution
 
@@ -300,7 +452,7 @@ You do not need custom "join" code. ADK `ParallelAgent` waits for all branches
 to finish, and because it is inside `SequentialAgent`, the next step
 (`summary_agent`) starts only after both airline results are done.
 
-## 9. Deterministic route-help response (no empty output)
+## 10. Deterministic route-help response (no empty output)
 
 In `validation_agent`, `before_agent_callback` (`_before_validation_agent`)
 intercepts route-help requests and returns direct text content. This avoids
@@ -319,7 +471,7 @@ Here are the supported routes:
 Tell me your origin, destination, and preferred departure date & time.
 ```
 
-## 10. Validation error formatting rules
+## 11. Validation error formatting rules
 
 Unsupported route errors are returned in multiline format:
 
@@ -338,7 +490,7 @@ Please choose one of the supported routes above and try again.
 Validation instructions explicitly require returning tool error text as-is (no
 line-break compression).
 
-## 11. Summary/booking flow contract
+## 12. Summary/booking flow contract
 
 For `book #1`:
 1. Summary agent responds with selected flight details.
@@ -354,14 +506,14 @@ It is only a demo agent and cannot really book this flight.
 I hope you enjoyed this demo :)
 ```
 
-## 12. How to recognize flow in ADK UI
+## 13. How to recognize flow in ADK UI
 
 - Parallel stage: you will see both airline agent/tool activities during search.
 - Sequential boundary: summary output appears only after both airline calls.
 - Follow-up selection: only the booking_agent path should execute (no airline
   chatter).
 
-## 13. Key ADK settings used in this project
+## 14. Key ADK settings used in this project
 
 - `sub_agents=[...]` on `LlmAgent`: enables transfer targets.
 - `SequentialAgent(...)`: enforce strict order of stages.

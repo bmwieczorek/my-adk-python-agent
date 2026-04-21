@@ -20,7 +20,7 @@ Run locally:
 
 Endpoints served:
     POST /            — A2A JSONRPC endpoint (message/send, message/sendStream)
-    GET  /.well-known/agent.json — A2A Agent Card (discovery metadata)
+    GET  /.well-known/agent-card.json — A2A Agent Card (discovery metadata)
 """
 
 import importlib
