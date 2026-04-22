@@ -29,6 +29,9 @@ COPY --chmod=775 . .
 # A2A_AGENT_MODULE selects which agent module to serve in A2A mode.
 # Accepts folder name only (e.g. my_multi_agent). The ".agent" suffix
 # is appended automatically by a2a_server.py at runtime.
+# OTEL_TO_CLOUD (true/1) enables Cloud Trace + Cloud Logging export for the
+# a2a container, mirroring the --otel_to_cloud flag used by the adk container.
+# Both containers must set this to emit OTel signals to the same GCP backends.
 ENV SERVE_MODE=adk
 ENV APP_PORT=8000
 ENV A2A_AGENT_MODULE=my_multi_agent

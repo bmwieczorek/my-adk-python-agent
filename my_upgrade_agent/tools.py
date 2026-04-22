@@ -7,12 +7,42 @@
 # BOM chain: Beam → libraries-bom → google-cloud-bom → individual library versions
 
 import logging
+import os
 import re
 import xml.etree.ElementTree as ET
+from urllib.parse import urlparse
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_ALLOWED_POM_XML_HOSTS = ("raw.githubusercontent.com",)
+_allowed_hosts_raw = os.environ.get(
+    "ALLOWED_POM_XML_HOSTS",
+    ",".join(_DEFAULT_ALLOWED_POM_XML_HOSTS),
+)
+ALLOWED_POM_XML_HOSTS = {
+    host.strip().lower() for host in _allowed_hosts_raw.split(",") if host.strip()
+}
+
+
+def _validate_pom_xml_url(url: str) -> str | None:
+    """Validate user-provided pom.xml URL against a strict host allowlist."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return "Only http:// and https:// URLs are allowed for pom.xml fetch."
+    if parsed.username or parsed.password:
+        return "URL userinfo is not allowed for pom.xml fetch."
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return "URL must include a valid hostname."
+    if hostname not in ALLOWED_POM_XML_HOSTS:
+        allowed_hosts = ", ".join(sorted(ALLOWED_POM_XML_HOSTS)) or "<none>"
+        return (
+            f"Host '{hostname}' is not allowed for pom.xml fetch. Allowed hosts: "
+            f"{allowed_hosts}. Set ALLOWED_POM_XML_HOSTS to override."
+        )
+    return None
 
 
 def fetch_pom_xml(url: str) -> dict:
@@ -26,6 +56,10 @@ def fetch_pom_xml(url: str) -> dict:
         A dict with 'status' ('success' or 'error') and 'pom_xml' (the XML text)
         or 'message' (error details).
     """
+    validation_error = _validate_pom_xml_url(url)
+    if validation_error:
+        return {"status": "error", "message": validation_error}
+
     try:
         resp = requests.get(url, timeout=30)
         resp.raise_for_status()
@@ -540,4 +574,3 @@ def generate_diff(original_pom_xml: str, updated_pom_xml: str) -> dict:
         return {"status": "no_changes", "diff": "No differences found."}
 
     return {"status": "success", "diff": diff_text}
-

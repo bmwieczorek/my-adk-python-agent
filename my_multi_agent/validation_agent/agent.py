@@ -83,9 +83,18 @@ def validate_departure_date(departure_date: str) -> dict:
     today = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
-    date = datetime.strptime(departure_date, "%Y-%m-%d").replace(
-        tzinfo=timezone.utc
-    )
+    try:
+        date = datetime.strptime(departure_date, "%Y-%m-%d").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return {
+            "valid": False,
+            "error": (
+                f"Invalid departure date format: {departure_date}. "
+                "Please provide the date in YYYY-MM-DD format."
+            ),
+        }
     if date < today:
         return {
             "valid": False,

@@ -140,14 +140,14 @@ pip list --outdated
 ### Using `deploy_docker.sh` (recommended)
 
 ```bash
-# Default (ADK web UI, my_upgrade_agent for A2A):
+# Default (ADK web UI):
 ./deploy_docker.sh
 
 # A2A mode with a specific agent:
 export SERVE_MODE=a2a A2A_AGENT_MODULE=my_multi_agent
 ./deploy_docker.sh
 
-# A2A mode with default agent (my_upgrade_agent):
+# A2A mode with default agent (my_multi_agent):
 export SERVE_MODE=a2a
 ./deploy_docker.sh
 ```
@@ -199,8 +199,7 @@ utility (`google.adk.a2a.utils.agent_to_a2a`), which wraps the existing
 
 - Serves an **Agent Card** at `GET /.well-known/agent-card.json` — the standard A2A
   discovery endpoint. The card is **auto-generated** from the agent's `name`,
-  `description`, `instruction`, and `tools` (including `get_currency_rate` and
-  `get_current_time`, which are exposed as A2A *skills*).
+  `description`, `instruction`, and `tools` (which are exposed as A2A *skills*).
 - Handles A2A JSONRPC calls at `POST /` — supports `message/send` and
   `message/sendStream` methods per the
   [A2A protocol spec v0.3](https://a2a-protocol.org/v0.3.0/specification).
@@ -217,6 +216,10 @@ utility (`google.adk.a2a.utils.agent_to_a2a`), which wraps the existing
 | `requirements-docker.in` | Adds [`a2a-sdk[http-server]`](https://pypi.org/project/a2a-sdk/) (Starlette server components) |
 
 ### Run locally
+
+`uvicorn a2a_server:app` tells uvicorn to import `a2a_server.py` as a module and serve
+the `app` object it exposes (the ASGI app created by `to_a2a(...)`).  All top-level code
+in `a2a_server.py` runs at import time — OTel setup, agent loading, and `app = to_a2a(...)`.
 
 ```bash
 # Suppress experimental-feature warnings (optional)
@@ -468,10 +471,10 @@ curl -X POST "http://localhost:4444/a2a" \
   -H "Content-Type: application/json" \
   -d '{
     "agent": {
-      "name": "bartek_currency_converter_agent",
+      "name": "flight_search_orchestrator",
       "endpoint_url": "http://host.containers.internal:8000/",
       "agent_type": "jsonrpc",
-      "description": "Currency converter agent — converts currencies using live FX rates",
+      "description": "Flight search orchestrator demo for domestic Poland routes",
       "auth_type": "bearer",
       "auth_token": "dummy"
     }
@@ -483,9 +486,9 @@ Example response:
 ```json
 {
   "id": "6f0de5c225914cf09c4fcccb8575370c",
-  "name": "bartek_currency_converter_agent",
-  "slug": "bartek-currency-converter-agent",
-  "description": "Currency converter agent",
+  "name": "flight_search_orchestrator",
+  "slug": "flight-search-orchestrator",
+  "description": "Flight search orchestrator demo",
   "endpointUrl": "http://host.containers.internal:8000/",
   "agentType": "jsonrpc",
   "protocolVersion": "1.0",
@@ -599,10 +602,10 @@ curl -X POST "http://localhost:4444/a2a" \
   -H "Content-Type: application/json" \
   -d '{
     "agent": {
-      "name": "bartek_currency_converter_agent",
+      "name": "flight_search_orchestrator",
       "endpoint_url": "http://host.containers.internal:8000/",
       "agent_type": "jsonrpc",
-      "description": "Currency converter agent",
+      "description": "Flight search orchestrator demo",
       "auth_type": "bearer",
       "auth_token": "a1b2c3d4e5f6..."
     }
@@ -628,7 +631,7 @@ Client ──POST /a2a/{name}/invoke──▶ ContextForge :4444 ──A2A JSONR
 ```
 
 ```bash
-curl -X POST "http://localhost:4444/a2a/bartek_currency_converter_agent/invoke" \
+curl -X POST "http://localhost:4444/a2a/flight_search_orchestrator/invoke" \
   -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
@@ -638,7 +641,7 @@ curl -X POST "http://localhost:4444/a2a/bartek_currency_converter_agent/invoke" 
         "message": {
           "messageId": "test-123",
           "role": "user",
-          "parts": [{"kind": "text", "text": "1 USD to PLN"}]
+          "parts": [{"kind": "text", "text": "Search flights for WAW-KRK tomorrow"}]
         }
       }
     }
@@ -655,7 +658,7 @@ Example response (abbreviated):
     "artifacts": [
       {
         "artifactId": "9dab87d7-f08a-47cf-81b4-e55a3684e98d",
-        "parts": [{"kind": "text", "text": "2026-04-19 15:43:19 - 1 USD is 3.5936406352 PLN"}]
+        "parts": [{"kind": "text", "text": "Here are available flight options. Please choose an Option # to continue."}]
       }
     ],
     "id": "c0ce263a-6f05-417f-b586-fad13c9a636e",
@@ -694,8 +697,8 @@ Example response:
   "result": {
     "tools": [
       {
-        "name": "a2a-bartek-currency-converter-agent",
-        "description": "A2A Agent: Currency converter agent",
+        "name": "a2a-flight-search-orchestrator",
+        "description": "A2A Agent: Flight search orchestrator demo",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -704,7 +707,7 @@ Example response:
           "required": ["query"]
         },
         "annotations": {
-          "title": "A2A Agent: bartek_currency_converter_agent",
+          "title": "A2A Agent: flight_search_orchestrator",
           "a2a_agent_id": "6f0de5c225914cf09c4fcccb8575370c",
           "a2a_agent_type": "jsonrpc"
         }
@@ -724,8 +727,8 @@ curl -s -X POST "http://localhost:4444/rpc" \
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "a2a-bartek-currency-converter-agent",
-      "arguments": {"query": "1 USD to PLN"}
+      "name": "a2a-flight-search-orchestrator",
+      "arguments": {"query": "Search flights for WAW-KRK tomorrow"}
     },
     "id": 1
   }' | jq '.result.content[0].text | fromjson'
@@ -742,23 +745,23 @@ Example response:
       {
         "artifactId": "5b48b307-75d3-4853-8a7e-a32de5f4b563",
         "parts": [
-          {"kind": "text", "text": "2026-04-19 17:25:10 - 1 USD is 3.593640642 PLN"}
+          {"kind": "text", "text": "Here are available flight options. Please choose an Option # to continue."}
         ]
       }
     ],
     "contextId": "32550651-02b7-4e7c-9692-e715258c04fd",
     "history": [
-      {"kind": "message", "role": "user", "parts": [{"kind": "text", "text": "1 USD to PLN"}]},
-      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "get_currency_rate", "args": {"from_currency": "USD", "to_currency": "PLN"}}, "kind": "data", "metadata": {"adk_type": "function_call"}}]},
-      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "get_currency_rate", "response": {"status": "success", "rate": 3.593640642}}, "kind": "data", "metadata": {"adk_type": "function_response"}}]},
-      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "get_current_time", "args": {}}, "kind": "data", "metadata": {"adk_type": "function_call"}}]},
-      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "get_current_time", "response": {"status": "success", "current_datetime": "2026-04-19 17:25:10"}}, "kind": "data", "metadata": {"adk_type": "function_response"}}]},
-      {"kind": "message", "role": "agent", "parts": [{"kind": "text", "text": "2026-04-19 17:25:10 - 1 USD is 3.593640642 PLN"}]}
+      {"kind": "message", "role": "user", "parts": [{"kind": "text", "text": "Search flights for WAW-KRK tomorrow"}]},
+      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "validate_route", "args": {"origin": "WAW", "destination": "KRK"}}, "kind": "data", "metadata": {"adk_type": "function_call"}}]},
+      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "validate_route", "response": {"valid": true, "origin": "WAW", "destination": "KRK"}}, "kind": "data", "metadata": {"adk_type": "function_response"}}]},
+      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "validate_departure_date", "args": {"departure_date": "2026-04-20"}}, "kind": "data", "metadata": {"adk_type": "function_call"}}]},
+      {"kind": "message", "role": "agent", "parts": [{"data": {"name": "validate_departure_date", "response": {"valid": true, "departure_date": "2026-04-20"}}, "kind": "data", "metadata": {"adk_type": "function_response"}}]},
+      {"kind": "message", "role": "agent", "parts": [{"kind": "text", "text": "Here are available flight options. Please choose an Option # to continue."}]}
     ],
     "id": "b61a68fe-ae1b-4420-a39b-0990e2027f12",
     "kind": "task",
     "metadata": {
-      "adk_app_name": "bartek_currency_converter_agent_latest",
+      "adk_app_name": "flight_search_orchestrator",
       "adk_usage_metadata": {
         "candidatesTokenCount": 37,
         "promptTokenCount": 281,
@@ -778,12 +781,12 @@ Example response:
     "jsonrpc": "2.0",
     "method": "tools/call",
     "params": {
-      "name": "a2a-bartek-currency-converter-agent",
-      "arguments": {"query": "1 USD to PLN"}
+      "name": "a2a-flight-search-orchestrator",
+      "arguments": {"query": "Search flights for WAW-KRK tomorrow"}
     },
     "id": 1
   }' | jq -r '.result.content[0].text | fromjson | .result.artifacts[0].parts[0].text'
-# Output: 2026-04-19 17:25:10 - 1 USD is 3.593640642 PLN
+# Output: Here are available flight options. Please choose an Option # to continue.
 ```
 
 > **Note:** The MCP response wraps the A2A JSON as an escaped string inside
@@ -803,8 +806,8 @@ Example response:
 [
   {
     "id": "6f0de5c225914cf09c4fcccb8575370c",
-    "name": "bartek_currency_converter_agent",
-    "slug": "bartek-currency-converter-agent",
+    "name": "flight_search_orchestrator",
+    "slug": "flight-search-orchestrator",
     "enabled": true,
     "reachable": true,
     "agentType": "jsonrpc",
@@ -858,6 +861,7 @@ podman rm -f mcpgateway
 | `A2A_HOST` | `0.0.0.0` | Bind host for the A2A server |
 | `A2A_PORT` | `8000` | Bind port for the A2A server |
 | `A2A_PROTOCOL` | `http` | Protocol advertised in the Agent Card URL |
+| `OTEL_TO_CLOUD` | *(unset)* | Set to `true` (or `1`/`yes`/`on`) to export OpenTelemetry traces and logs to Cloud Trace + Cloud Logging |
 | `ADK_SUPPRESS_A2A_EXPERIMENTAL_FEATURE_WARNINGS` | *(unset)* | Set to `1` to suppress ADK A2A experimental warnings |
 
 ## Deploy to GKE
@@ -878,7 +882,8 @@ export GKE_CLUSTER_NAME=...
 export GKE_CLUSTER_REGION=...
 export AGENT_IMAGE_REPO=...
 export GKE_SERVICE_ACCOUNT=...             # GCP SA email (e.g. name@project.iam.gserviceaccount.com); K8s SA name is derived as part before '@'
-export GKE_HTTP_URL_DOMAIN=...             # e.g. example.com
+export GKE_HTTP_URL_DOMAIN=...             # e.g. dev.example.com (includes env prefix)
+export GKE_CLUSTER_SUBDOMAIN_INFIX=...    # e.g. apps.cluster-name (cluster-specific subdomain segment)
 
 
 ./deploy_gke.sh
@@ -988,7 +993,8 @@ image, each with a different `SERVE_MODE` and port:
 │  │                          │  │ /.well-known/      │ │
 │  │ adk web --port 8000      │  │ agent-card.json    │ │
 │  │   --no-reload            │  │                    │ │
-│  │   --otel_to_cloud        │  │ uvicorn :8001      │ │
+│  │   --otel_to_cloud        │  │ OTEL_TO_CLOUD=true │ │
+│  │                          │  │ uvicorn :8001      │ │
 │  └──────────────────────────┘  └────────────────────┘ │
 │         ▲                             ▲               │
 └─────────┼─────────────────────────────┼───────────────┘
@@ -1119,8 +1125,8 @@ or test A2A at http://localhost:8001/.well-known/agent-card.json.
 External URLs (via Istio VirtualService):
 
 ```
-ADK Web UI:  https://bartek-adk-agent-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
-A2A Server:  https://bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
+ADK Web UI:  https://bartek-adk-agent-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}
+A2A Server:  https://bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}
 ```
 
 #### Testing A2A via curl
@@ -1160,7 +1166,7 @@ final text) — filtering out noise like `adk_thought_signature` and truncating 
 fields — pipe through `jq`:
 
 ```bash
-A2A_URL="https://bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
+A2A_URL="https://bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}"
 
 curl -s -X POST "${A2A_URL}" \
   -H "Content-Type: application/json" \
@@ -1457,11 +1463,10 @@ python -c "import json; d=json.load(open('$HOME/.config/gcloud/application_defau
 
 ### Running in Docker / GKE
 
-Add the flag to the Dockerfile entrypoint:
+#### ADK web container
 
-```dockerfile
-ENTRYPOINT ["adk", "web", "--host", "0.0.0.0", "--otel_to_cloud"]
-```
+The ADK web container already passes `--otel_to_cloud` in its Dockerfile `CMD`, so no further
+configuration is required.
 
 The `opentelemetry-instrumentation-google-genai` package must also be in `requirements-docker.in`:
 
@@ -1471,6 +1476,28 @@ opentelemetry-instrumentation-google-genai>=0.7b0,<1
 
 On GKE with Workload Identity, `google.auth.default()` returns the pod's service account
 and project, so the ADC quota project issue does not apply.
+
+#### A2A container (sidecar)
+
+The A2A container runs as a separate `uvicorn` process and does **not** share the ADK web server's
+OTel setup. To export traces and logs from the A2A container to the same GCP backends, set the
+`OTEL_TO_CLOUD` environment variable:
+
+```bash
+# docker run
+docker run -e OTEL_TO_CLOUD=true ...
+
+# kubectl (one-off)
+kubectl set env deployment/bartek-adk-agent -c a2a OTEL_TO_CLOUD=true
+```
+
+In `k8s/deployment.yaml` the `OTEL_TO_CLOUD=true` env var is already set on the `a2a` container
+so both containers emit to Cloud Trace and Cloud Logging out of the box.
+
+`a2a_server.py` calls the same ADK-internal telemetry helpers as `adk web --otel_to_cloud`
+(`google.adk.telemetry.google_cloud` + `google.adk.telemetry.setup`), so spans from both
+containers appear in the same trace.  Cloud Metrics export is disabled in both — ADK itself
+disables it due to known shutdown errors.
 
 ### Viewing traces
 
@@ -1546,6 +1573,8 @@ Based on the approach documented in the
 ### How it works
 
 1. Provide the agent with a **raw HTTP link** to a `pom.xml` (e.g. a GitHub raw URL)
+   - For security, `fetch_pom_xml` allows `raw.githubusercontent.com` by default.
+     To allow additional hosts, set `ALLOWED_POM_XML_HOSTS=host1,host2`.
 2. The agent fetches and parses the `pom.xml`, extracting `<properties>` version values
 3. Finds the **latest Beam release** from Maven Central
 4. Resolves the **BOM chain**: Beam → `libraries-bom` (from `BeamModulePlugin.groovy`) → `google-cloud-bom` (from `libraries-bom` POM) → BigQuery & Storage versions (from `google-cloud-bom` POM)
@@ -1640,7 +1669,7 @@ BASE=http://localhost:8000   # -p 8000:8000 in docker run
 #### 3. GKE
 
 ```bash
-BASE=https://bartek-adk-agent-${GKE_NAMESPACE}.apps.dev-03.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
+BASE=https://bartek-adk-agent-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}
 ```
 
 Then use the same session-creation + `/run_sse` flow as above.
@@ -1660,8 +1689,9 @@ Then use the same session-creation + `/run_sse` flow as above.
 
 ### Talking to the agent via A2A protocol
 
-`my_upgrade_agent` already declares an `A2AConfig` in its `App` definition, so
-`adk web` automatically serves A2A endpoints when the agent is loaded.
+`adk web` can serve A2A endpoints for agents that define `A2AConfig`.
+In this repo, the recommended path is `a2a_server.py` (or Docker with
+`SERVE_MODE=a2a`) for consistent A2A serving across agents.
 
 When running via the standalone `a2a_server.py` (or Docker with `SERVE_MODE=a2a`),
 the A2A JSONRPC endpoints are served at the root.
@@ -1747,7 +1777,7 @@ unreachable from inside the Docker container.
 agent card advertises a Docker-reachable URL:
 
 ```bash
-A2A_HOST=host.docker.internal A2A_AGENT_MODULE=my_multi_agent python a2a_server.py
+A2A_HOST=host.docker.internal A2A_AGENT_MODULE=my_multi_agent uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 ```
 
 **Cleanup** (stop and remove the Docker inspector container):
@@ -1790,7 +1820,7 @@ This starts both the backend (FastAPI) and frontend (TypeScript build watcher).
 
 ```bash
 cd ~/dev/my-adk-python-agent
-A2A_AGENT_MODULE=my_multi_agent python a2a_server.py
+A2A_AGENT_MODULE=my_multi_agent uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 ```
 
 **Step 5 — Connect:**
@@ -1810,27 +1840,27 @@ Agent card is valid.
   "capabilities": {},
   "defaultInputModes": ["text/plain"],
   "defaultOutputModes": ["text/plain"],
-  "description": "Bartek Currency Converter Agent Latest",
-  "name": "bartek_currency_converter_agent_latest",
+  "description": "Flight Search Orchestrator",
+  "name": "flight_search_orchestrator",
   "preferredTransport": "JSONRPC",
   "protocolVersion": "0.3.0",
   "skills": [
     {
-      "description": "Bartek Currency Converter Agent Latest ...",
-      "id": "bartek_currency_converter_agent_latest",
+      "description": "Flight Search Orchestrator ...",
+      "id": "flight_search_orchestrator",
       "name": "model",
       "tags": ["llm"]
     },
     {
       "description": "Call self as a function.",
-      "id": "bartek_currency_converter_agent_latest-get_current_time",
-      "name": "get_current_time",
+      "id": "flight_search_orchestrator-validate_route",
+      "name": "validate_route",
       "tags": ["llm", "tools"]
     },
     {
       "description": "Call self as a function.",
-      "id": "bartek_currency_converter_agent_latest-get_currency_rate",
-      "name": "get_currency_rate",
+      "id": "flight_search_orchestrator-validate_departure_date",
+      "name": "validate_departure_date",
       "tags": ["llm", "tools"]
     }
   ],
@@ -1842,11 +1872,11 @@ Agent card is valid.
 
 **Step 6 — Chat with the agent:**
 
-Type `1 EUR to PLN` in the Live Chat and send. The inspector shows:
+Type `Search flights for WAW-KRK tomorrow` in the Live Chat and send. The inspector shows:
 
 ```
 task
-2026-04-19 18:13:58 - 1 EUR is 4.227448472 PLN ✅
+Here are available flight options. Please choose an Option # to continue. ✅
 ```
 
 **Step 7 — Debug:**
@@ -1943,4 +1973,3 @@ This validates your environment's A2A compatibility end-to-end.
 | **A2A Inspector** | Visual debugging, spec validation | `git clone` + `uv sync` or Docker |
 | **Python `a2a-sdk`** | Programmatic integration, test scripts | `pip install a2a-sdk` |
 | **A2A samples** | End-to-end protocol validation | `git clone` + `uv` |
-

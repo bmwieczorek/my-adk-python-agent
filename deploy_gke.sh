@@ -9,12 +9,47 @@ cd "$ROOT_DIR"
 # Deployment settings
 APP_NAME="bartek-adk-agent"
 
+# Validate required commands before any command usage.
+required_commands=(gcloud kubectl docker)
+for cmd in "${required_commands[@]}"; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Missing required command: $cmd" >&2
+    exit 1
+  fi
+done
+
+GKE_NAMESPACE="${GKE_NAMESPACE:?Must set GKE_NAMESPACE}"
+
+GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:?Must set GOOGLE_CLOUD_PROJECT}"
+GKE_CLUSTER_PROJECT="${GKE_CLUSTER_PROJECT:?Must set GKE_CLUSTER_PROJECT}"
+GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:?Must set GKE_CLUSTER_NAME}"
+GKE_CLUSTER_REGION="${GKE_CLUSTER_REGION:?Must set GKE_CLUSTER_REGION}"
+
+AGENT_IMAGE_REPO="${AGENT_IMAGE_REPO:?Must set AGENT_IMAGE_REPO (e.g. registry.example.com/org/image-name)}"
+
+GKE_SERVICE_ACCOUNT="${GKE_SERVICE_ACCOUNT:?Must set GKE_SERVICE_ACCOUNT (full GCP SA email)}"
+# Derive the K8s SA name (part before '@') from the full GCP SA email
+GKE_SERVICE_ACCOUNT_NAME="${GKE_SERVICE_ACCOUNT%%@*}"
+
+GKE_HTTP_URL_DOMAIN="${GKE_HTTP_URL_DOMAIN:?Must set GKE_HTTP_URL_DOMAIN (e.g. dev.example.com)}"
+GKE_CLUSTER_SUBDOMAIN_INFIX="${GKE_CLUSTER_SUBDOMAIN_INFIX:?Must set GKE_CLUSTER_SUBDOMAIN_INFIX (e.g. apps.cluster-name)}"
+
+if ! gcloud auth list --filter=status:ACTIVE --format='value(account)' | grep -q .; then
+  echo "No active gcloud account. Run: gcloud auth login" >&2
+  exit 1
+fi
+
+echo "Fetching GKE credentials: $GKE_CLUSTER_NAME ($GKE_CLUSTER_REGION / $GKE_CLUSTER_PROJECT)"
+echo "+ gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_CLUSTER_REGION --project $GKE_CLUSTER_PROJECT"
+gcloud container clusters get-credentials "$GKE_CLUSTER_NAME" --region "$GKE_CLUSTER_REGION" --project "$GKE_CLUSTER_PROJECT"
+
 # Auto-detect current image tag from the running pod and bump patch version.
 # If a tag is passed as $1, use that instead.
 if [[ -n "${1:-}" ]]; then
   AGENT_IMAGE_TAG="$1"
+  echo "Using explicit image tag: ${AGENT_IMAGE_TAG}"
 else
-  CURRENT_TAG=$(kubectl get deployment "$APP_NAME" -n "${GKE_NAMESPACE:-}" \
+  CURRENT_TAG=$(kubectl get deployment "$APP_NAME" -n "$GKE_NAMESPACE" \
     -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null \
     | grep -oE '[0-9]+\.[0-9]+\.[0-9]+$' || echo "")
   if [[ -n "$CURRENT_TAG" ]]; then
@@ -31,25 +66,12 @@ else
   fi
 fi
 
-GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:?Must set GOOGLE_CLOUD_PROJECT}"
-GKE_NAMESPACE="${GKE_NAMESPACE:?Must set GKE_NAMESPACE}"
-GKE_CLUSTER_PROJECT="${GKE_CLUSTER_PROJECT:?Must set GKE_CLUSTER_PROJECT}"
-GKE_CLUSTER_NAME="${GKE_CLUSTER_NAME:?Must set GKE_CLUSTER_NAME}"
-GKE_CLUSTER_REGION="${GKE_CLUSTER_REGION:?Must set GKE_CLUSTER_REGION}"
-
-AGENT_IMAGE_REPO="${AGENT_IMAGE_REPO:?Must set AGENT_IMAGE_REPO (e.g. registry.example.com/org/image-name)}"
 AGENT_IMAGE_URI="${AGENT_IMAGE_REPO}:${AGENT_IMAGE_TAG}"
 
-GKE_SERVICE_ACCOUNT="${GKE_SERVICE_ACCOUNT:?Must set GKE_SERVICE_ACCOUNT (full GCP SA email)}"
-# Derive the K8s SA name (part before '@') from the full GCP SA email
-GKE_SERVICE_ACCOUNT_NAME="${GKE_SERVICE_ACCOUNT%%@*}"
-
-GKE_HTTP_URL_DOMAIN="${GKE_HTTP_URL_DOMAIN:?Must set GKE_HTTP_URL_DOMAIN (e.g. example.com)}"
-GKE_CLUSTER_SUBDOMAIN_INFIX="${GKE_CLUSTER_SUBDOMAIN_INFIX:?Must set GKE_CLUSTER_SUBDOMAIN_INFIX (e.g. apps.cluster-name)}"
-
-# Export for envsubst (deployment.yaml uses ${AGENT_IMAGE_URI} and ${GKE_SERVICE_ACCOUNT_NAME},
-# service.yaml and virtual-service.yaml use ${GKE_NAMESPACE},
-# virtual-service.yaml uses ${GKE_CLUSTER_REGION} and ${GKE_HTTP_URL_DOMAIN})
+# Export for envsubst (deployment.yaml uses ${AGENT_IMAGE_URI}, ${GKE_SERVICE_ACCOUNT_NAME},
+# ${A2A_AGENT_MODULE}, ${GKE_CLUSTER_SUBDOMAIN_INFIX}; service.yaml and
+# virtual-service.yaml use ${GKE_NAMESPACE}; virtual-service.yaml also uses
+# ${GKE_CLUSTER_REGION}, ${GKE_HTTP_URL_DOMAIN}, ${GKE_CLUSTER_SUBDOMAIN_INFIX})
 export AGENT_IMAGE_URI="$AGENT_IMAGE_URI"
 export GKE_SERVICE_ACCOUNT_NAME="$GKE_SERVICE_ACCOUNT_NAME"
 export GKE_NAMESPACE="$GKE_NAMESPACE"
@@ -98,22 +120,14 @@ if [[ -z "${A2A_AGENT_MODULE:-}" ]]; then
 fi
 export A2A_AGENT_MODULE
 
-required_commands=(gcloud kubectl docker)
-for cmd in "${required_commands[@]}"; do
-  if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "Missing required command: $cmd" >&2
-    exit 1
-  fi
-done
-
 # --- Ensure the GCP service account has the required IAM roles ---
-# The ADK ENTRYPOINT uses --otel_to_cloud which exports OpenTelemetry traces/logs
-# to Cloud Logging and Cloud Trace. This requires:
+# Both containers export OpenTelemetry signals:
+#   - adk-web: via --otel_to_cloud  (Cloud Trace + Cloud Logging)
+#   - a2a:     via OTEL_TO_CLOUD=true (Cloud Trace + Cloud Logging)
+# Required roles:
 #   - roles/logging.logWriter   (logging.logEntries.create)
-#   - roles/cloudtrace.agent    (cloudtrace.traces.patch)
-echo "Ensuring GCP GKE SA has logging IAM role"
-echo "+ gcloud projects add-iam-policy-binding $GOOGLE_CLOUD_PROJECT --member=serviceAccount:$GKE_SERVICE_ACCOUNT --role=roles/logging.logWriter"
-
+#   - roles/cloudtrace.agent    (cloudtrace.traces.patch + telemetry.traces.write)
+echo "Ensuring GCP GKE SA has required IAM roles"
 
 # BigQuery Data Editor - Access to edit all the contents of datasets, otherwise: ERROR - bigquery_agent_analytics_plugin.py:2159 - Error checking for table project-id.bartek_adk_agent_analytics.agent_events: 403 GET https://bigquery.googleapis.com/bigquery/v2/projects/project-id/datasets/bartek_adk_agent_analytics/tables/agent_events?prettyPrint=false: Access Denied: Table project-id:bartek_adk_agent_analytics.agent_events: Permission bigquery.tables.get denied on table project-id:bartek_adk_agent_analytics.agent_events (or it may not exist).
 gcloud projects add-iam-policy-binding "$GOOGLE_CLOUD_PROJECT" \
@@ -174,16 +188,6 @@ for var_name in "${required_runtime_vars[@]}"; do
   fi
 done
 
-if ! gcloud auth list --filter=status:ACTIVE --format='value(account)' | grep -q .; then
-  echo "No active gcloud account. Run: gcloud auth login" >&2
-  exit 1
-fi
-
-
-echo "Fetching GKE credentials: $GKE_CLUSTER_NAME ($GKE_CLUSTER_REGION / $GKE_CLUSTER_PROJECT)"
-echo "+ gcloud container clusters get-credentials $GKE_CLUSTER_NAME --region $GKE_CLUSTER_REGION --project $GKE_CLUSTER_PROJECT"
-gcloud container clusters get-credentials "$GKE_CLUSTER_NAME" --region "$GKE_CLUSTER_REGION" --project "$GKE_CLUSTER_PROJECT"
-
 echo "Building image with docker"
 echo "+ docker build --build-arg GOOGLE_GENAI_USE_VERTEXAI=$GOOGLE_GENAI_USE_VERTEXAI -t $APP_NAME ."
 docker build --build-arg GOOGLE_GENAI_USE_VERTEXAI="$GOOGLE_GENAI_USE_VERTEXAI" -t "$APP_NAME" .
@@ -228,5 +232,5 @@ echo "Deployment complete. Current pods:"
 echo "+ kubectl get pods -n $GKE_NAMESPACE -l app=$APP_NAME"
 kubectl get pods -n "$GKE_NAMESPACE" -l app="$APP_NAME"
 
-echo "ADK Web UI:  https://${APP_NAME}-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
-echo "A2A Server:  https://${APP_NAME}-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
+echo "ADK Web UI:  https://${APP_NAME}-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}"
+echo "A2A Server:  https://${APP_NAME}-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}"

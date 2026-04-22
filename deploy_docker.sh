@@ -16,6 +16,8 @@ HOST_PORT="${HOST_PORT:-8000}"
 CONTAINER_PORT=8000
 SERVE_MODE="${SERVE_MODE:-adk}"
 A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_multi_agent}"
+# Pass OTEL_TO_CLOUD through when set — mirrors --otel_to_cloud on the adk container.
+OTEL_TO_CLOUD="${OTEL_TO_CLOUD:-}"
 
 # --- Required env vars (same as GKE runtime vars) ---
 required_vars=(GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID GCS_BUCKET)
@@ -49,6 +51,7 @@ docker run --name "$APP_NAME" --rm -it \
   -p "${HOST_PORT}:${CONTAINER_PORT}" \
   -e SERVE_MODE="$SERVE_MODE" \
   -e A2A_AGENT_MODULE="$A2A_AGENT_MODULE" \
+  -e OTEL_TO_CLOUD="$OTEL_TO_CLOUD" \
   -e GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
   -e GOOGLE_CLOUD_LOCATION="$GOOGLE_CLOUD_LOCATION" \
   -e BIG_QUERY_DATASET_ID="$BIG_QUERY_DATASET_ID" \

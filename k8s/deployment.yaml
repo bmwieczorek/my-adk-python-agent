@@ -77,7 +77,10 @@ spec:
             - name: A2A_PROTOCOL
               value: "https"
             - name: A2A_HOST
-              value: "bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}"
+              value: "bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}"
+            # Enable Cloud Trace + Cloud Logging export (mirrors --otel_to_cloud on the adk container).
+            - name: OTEL_TO_CLOUD
+              value: "true"
           resources:
             requests:
               cpu: "250m"

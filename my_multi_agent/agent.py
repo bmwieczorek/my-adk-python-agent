@@ -27,7 +27,7 @@ Run locally:
     # Then select "flight_search_orchestrator" in the UI
 
     # Or via A2A:
-    A2A_AGENT_MODULE=my_multi_agent.agent python a2a_server.py
+    A2A_AGENT_MODULE=my_multi_agent uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 """
 
 from google.adk.agents import LlmAgent

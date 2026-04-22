@@ -23,8 +23,6 @@ SUPPORTED_ROUTES = [
     ("WAW", "KTW"),  # Warsaw Chopin -> Katowice Pyrzowice
 ]
 
-SUPPORTED_ROUTES_DISPLAY = "\n".join([f"  {o} -> {d}" for o, d in SUPPORTED_ROUTES])
-
 USE_CASE_1_SUCCESS = {
     "name": "successful_e2e_flow",
     "steps": [
@@ -105,7 +103,7 @@ USE_CASE_4_SHOW_ROUTES = {
             "actor": "validation_agent",
             "message": (
                 "Return all supported routes and then say: "
-                '"Tell me your origin and destination route and date & time when you would like to fly"'
+                f'"{SEARCH_PROMPT}"'
             ),
         },
         {

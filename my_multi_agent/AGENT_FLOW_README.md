@@ -421,7 +421,7 @@ User            root_agent       validation_agent     flight_search_and_     par
 | Agent | Setting | Purpose |
 |---|---|---|
 | `validation_agent` | `disallow_transfer_to_parent=True` | Prevent bouncing back to root mid-flow |
-| `summary_agent` | `disallow_transfer_to_parent=True`, `disallow_transfer_to_peers=True` | Keep selection + booking inside summary flow |
+| `summary_agent` | `disallow_transfer_to_parent=True`, `disallow_transfer_to_peers=True` | Keep summary focused on table rendering only |
 | `booking_agent` | `disallow_transfer_to_parent=True`, `disallow_transfer_to_peers=True` | Ensure follow-up messages remain in booking logic |
 | `airline_a_flight_search_agent` | `disallow_transfer_to_parent=True`, `disallow_transfer_to_peers=True` | Airline A only returns search results |
 | `airline_b_flight_search_agent` | `disallow_transfer_to_parent=True`, `disallow_transfer_to_peers=True` | Airline B only returns search results |
@@ -493,12 +493,12 @@ line-break compression).
 ## 12. Summary/booking flow contract
 
 For `book #1`:
-1. Summary agent responds with selected flight details.
+1. `booking_agent` responds with selected flight details.
 2. Then asks: `Would you like to book Option #1?`
 3. It does **not** call booking tool in the same turn.
 
 For `yes`:
-1. Summary calls `book_flight`.
+1. `booking_agent` calls `book_flight`.
 2. Returns demo disclaimer only:
 
 ```text

@@ -10,8 +10,8 @@ spec:
     - istio-system/apps-internal-gateway
     - mesh
   hosts:
-    - bartek-adk-agent-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
-    - bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.dev.${GKE_HTTP_URL_DOMAIN}
+    - bartek-adk-agent-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}
+    - bartek-adk-agent-a2a-${GKE_NAMESPACE}.${GKE_CLUSTER_SUBDOMAIN_INFIX}.${GKE_CLUSTER_REGION}.${GKE_HTTP_URL_DOMAIN}
   http:
     # A2A traffic (matched by host) → port 8001
     - match:
