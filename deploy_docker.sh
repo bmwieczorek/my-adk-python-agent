@@ -15,7 +15,7 @@ APP_NAME="bartek-adk-agent"
 HOST_PORT="${HOST_PORT:-8000}"
 CONTAINER_PORT=8000
 SERVE_MODE="${SERVE_MODE:-adk}"
-A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_upgrade_agent.agent}"
+A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_multi_agent}"
 
 # --- Required env vars (same as GKE runtime vars) ---
 required_vars=(GOOGLE_CLOUD_PROJECT GOOGLE_CLOUD_LOCATION BIG_QUERY_DATASET_ID GCS_BUCKET)

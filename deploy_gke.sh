@@ -60,8 +60,8 @@ export GKE_CLUSTER_SUBDOMAIN_INFIX="$GKE_CLUSTER_SUBDOMAIN_INFIX"
 GOOGLE_GENAI_USE_VERTEXAI="TRUE"
 
 # --- A2A agent module selection ---
-# A2A_AGENT_MODULE accepts a folder name (e.g. my_upgrade_agent). The ".agent"
-# suffix is appended automatically for the Python module path.
+# A2A_AGENT_MODULE accepts a folder name only (e.g. my_upgrade_agent).
+# The ".agent" suffix is appended automatically by a2a_server.py at runtime.
 # If not set, scan the repo and let the user pick interactively.
 if [[ -z "${A2A_AGENT_MODULE:-}" ]]; then
   echo ""
@@ -96,8 +96,7 @@ if [[ -z "${A2A_AGENT_MODULE:-}" ]]; then
   echo "Selected: ${A2A_AGENT_MODULE}"
   echo ""
 fi
-# Append .agent suffix for the Python module path
-export A2A_AGENT_MODULE="${A2A_AGENT_MODULE}.agent"
+export A2A_AGENT_MODULE
 
 required_commands=(gcloud kubectl docker)
 for cmd in "${required_commands[@]}"; do

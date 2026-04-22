@@ -144,7 +144,7 @@ pip list --outdated
 ./deploy_docker.sh
 
 # A2A mode with a specific agent:
-export SERVE_MODE=a2a A2A_AGENT_MODULE=bartek_adk_agent.agent
+export SERVE_MODE=a2a A2A_AGENT_MODULE=my_multi_agent
 ./deploy_docker.sh
 
 # A2A mode with default agent (my_upgrade_agent):
@@ -155,7 +155,7 @@ export SERVE_MODE=a2a
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SERVE_MODE` | `adk` | `adk` for ADK dev UI, `a2a` for A2A JSONRPC server |
-| `A2A_AGENT_MODULE` | `my_upgrade_agent.agent` | Python module to serve in A2A mode |
+| `A2A_AGENT_MODULE` | `my_multi_agent` | Agent folder name to serve in A2A mode (`.agent` suffix added automatically) |
 | `HOST_PORT` | `8000` | Host port to publish |
 
 > **Important:** use `export` — plain `VAR=x && ./script.sh` does **not** pass vars to the script.
@@ -212,7 +212,7 @@ utility (`google.adk.a2a.utils.agent_to_a2a`), which wraps the existing
 | File | Role |
 |---|---|
 | `a2a_server.py` | Entry point — calls `to_a2a(root_agent, ...)` to create the Starlette ASGI app |
-| `bartek_adk_agent/agent.py` | Agent definition (unchanged) — `root_agent` with tools and instructions |
+| `my_multi_agent/agent.py` | Agent definition — `root_agent` with tools and instructions |
 | `Dockerfile` | Conditional `CMD` — runs `adk web` or `uvicorn a2a_server:app` based on `SERVE_MODE` |
 | `requirements-docker.in` | Adds [`a2a-sdk[http-server]`](https://pypi.org/project/a2a-sdk/) (Starlette server components) |
 
@@ -222,11 +222,11 @@ utility (`google.adk.a2a.utils.agent_to_a2a`), which wraps the existing
 # Suppress experimental-feature warnings (optional)
 export ADK_SUPPRESS_A2A_EXPERIMENTAL_FEATURE_WARNINGS=1
 
-# Default — serves my_upgrade_agent:
+# Default — serves my_multi_agent:
 uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 
-# Serve bartek_adk_agent instead:
-A2A_AGENT_MODULE=bartek_adk_agent.agent uvicorn a2a_server:app --host 0.0.0.0 --port 8000
+# Serve my_upgrade_agent instead:
+A2A_AGENT_MODULE=my_upgrade_agent uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 ```
 
 Verify the Agent Card:
@@ -265,7 +265,7 @@ export SERVE_MODE=a2a
 ./deploy_docker.sh
 
 # With a specific agent:
-export SERVE_MODE=a2a A2A_AGENT_MODULE=bartek_adk_agent.agent
+export SERVE_MODE=a2a A2A_AGENT_MODULE=my_multi_agent
 ./deploy_docker.sh
 ```
 
@@ -436,7 +436,7 @@ export MCPGATEWAY_BEARER_TOKEN
 In a separate terminal:
 
 ```bash
-export A2A_AGENT_MODULE=bartek_adk_agent.agent
+export A2A_AGENT_MODULE=my_multi_agent
 uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 ```
 
@@ -854,7 +854,7 @@ podman rm -f mcpgateway
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SERVE_MODE` | `adk` | `adk` for ADK dev UI, `a2a` for A2A JSONRPC server |
-| `A2A_AGENT_MODULE` | `my_upgrade_agent.agent` | Python module to import `root_agent` from (e.g. `bartek_adk_agent.agent`) |
+| `A2A_AGENT_MODULE` | `my_multi_agent` | Agent folder name to serve in A2A mode (`.agent` suffix added automatically by `a2a_server.py`) |
 | `A2A_HOST` | `0.0.0.0` | Bind host for the A2A server |
 | `A2A_PORT` | `8000` | Bind port for the A2A server |
 | `A2A_PROTOCOL` | `http` | Protocol advertised in the Agent Card URL |
@@ -920,12 +920,11 @@ Scanning for available root agents...
 
 Option #     Agent folder
 --------     ----------------------------------------
-1            bartek_adk_agent
-2            my_bq_agent
-3            my_multi_agent
-4            my_upgrade_agent
+1            my_bq_agent
+2            my_multi_agent
+3            my_upgrade_agent
 
-Select the agent to expose via A2A (Option #): 3
+Select the agent to expose via A2A (Option #): 2
 Selected: my_multi_agent
 ```
 
@@ -1748,7 +1747,7 @@ unreachable from inside the Docker container.
 agent card advertises a Docker-reachable URL:
 
 ```bash
-A2A_HOST=host.docker.internal A2A_AGENT_MODULE=bartek_adk_agent.agent python a2a_server.py
+A2A_HOST=host.docker.internal A2A_AGENT_MODULE=my_multi_agent python a2a_server.py
 ```
 
 **Cleanup** (stop and remove the Docker inspector container):
@@ -1791,7 +1790,7 @@ This starts both the backend (FastAPI) and frontend (TypeScript build watcher).
 
 ```bash
 cd ~/dev/my-adk-python-agent
-A2A_AGENT_MODULE=bartek_adk_agent.agent python a2a_server.py
+A2A_AGENT_MODULE=my_multi_agent python a2a_server.py
 ```
 
 **Step 5 — Connect:**

@@ -26,11 +26,12 @@ COPY --chmod=775 . .
 #   adk  (default) — standard ADK dev UI served by `adk web`
 #   a2a             — A2A JSONRPC server for agent-to-agent communication
 # APP_PORT controls which port the server listens on (default: 8000).
-# A2A_AGENT_MODULE selects which agent module to serve in A2A mode
-#   (default: bartek_adk_agent.agent, alternative: my_upgrade_agent.agent)
+# A2A_AGENT_MODULE selects which agent module to serve in A2A mode.
+# Accepts folder name only (e.g. my_multi_agent). The ".agent" suffix
+# is appended automatically by a2a_server.py at runtime.
 ENV SERVE_MODE=adk
 ENV APP_PORT=8000
-ENV A2A_AGENT_MODULE=my_upgrade_agent.agent
+ENV A2A_AGENT_MODULE=my_multi_agent
 
 CMD if [ "$SERVE_MODE" = "a2a" ]; then \
       exec uvicorn a2a_server:app --host 0.0.0.0 --port "$APP_PORT"; \
