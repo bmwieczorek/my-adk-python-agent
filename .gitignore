@@ -1,6 +1,26 @@
 .adk
-my_bq_agent/.adk
 .idea
-my-adk-python-agent.iml
 .env
+my-adk-python-agent.iml
+
 __pycache__/
+
+# Local data / log / scratch files
+*.json
+*.db
+*.txt
+
+# One-off scripts not part of the main codebase
+api.py
+rest.py
+delete.py
+deploy.py
+
+# Agent directories not intended for public commits
+bartek_adk_agent/
+
+# IBM ContextForge local data
+ibm-context-forge/
+
+# Docker ignore file (local only)
+.dockerignore
