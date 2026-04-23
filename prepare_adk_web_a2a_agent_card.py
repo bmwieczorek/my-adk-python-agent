@@ -1,9 +1,9 @@
-"""Prepare agent.json for ADK web integrated A2A mode.
+"""Prepare agent.json for integrated ADK FastAPI A2A mode.
 
-`adk web --a2a` discovers A2A apps from subdirectories that contain an
-`agent.json` file. This helper writes that file for the selected app using
-runtime env vars, so Cloud Run/GKE/local URLs can be injected without baking
-environment-specific values into the image.
+`get_fast_api_app(..., a2a=True)` discovers A2A apps from subdirectories that
+contain an `agent.json` file. This helper writes that file for the selected app
+using runtime env vars, so Cloud Run/GKE/local URLs can be injected without
+baking environment-specific values into the image.
 """
 
 from __future__ import annotations

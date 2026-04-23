@@ -23,29 +23,29 @@ EXPOSE 8000 8001
 COPY --chmod=775 . .
 
 # SERVE_MODE selects the runtime entrypoint:
-#   adk  (default) — standard ADK dev UI served by `adk web`
+#   adk  (default) — unified FastAPI runtime via get_fast_api_app(...)
 #   a2a             — standalone A2A JSONRPC server for agent-to-agent communication
 # APP_PORT controls which port the server listens on (default: 8000).
 # A2A_AGENT_MODULE selects which agent module to serve in A2A mode.
 # Accepts folder name only (e.g. my_multi_agent). The ".agent" suffix
 # is appended automatically by a2a_server.py at runtime.
-# A2A enables ADK-web integrated A2A mode when SERVE_MODE=adk.
-# In integrated mode we generate <A2A_AGENT_MODULE>/agent.json at startup and run
-# `adk web --a2a ...`, which exposes framework-managed A2A routes.
-# OTEL_TO_CLOUD (true/1) enables Cloud Trace + Cloud Logging export for the
-# a2a container, mirroring the --otel_to_cloud flag used by the adk container.
-# Both containers must set this to emit OTel signals to the same GCP backends.
+# FASTAPI_APP_MODULE points to a module-level `app` object served by uvicorn.
+# A2A enables integrated A2A mode for the FastAPI runtime when SERVE_MODE=adk.
+# In integrated mode we generate <A2A_AGENT_MODULE>/agent.json at startup.
+# TRACE_TO_CLOUD (true/1) enables Cloud Trace export for the unified FastAPI
+# runtime. OTEL_TO_CLOUD remains available for standalone A2A runtime parity.
 ENV SERVE_MODE=adk
 ENV APP_PORT=8000
+ENV FASTAPI_APP_MODULE=adk_fastapi_server:app
 ENV A2A=false
 ENV A2A_AGENT_MODULE=my_multi_agent
 ENV A2A_CARD_PATH_PREFIX=/a2a
 
 CMD if [ "$SERVE_MODE" = "a2a" ]; then \
-      exec uvicorn a2a_server:app --host 0.0.0.0 --port "$APP_PORT"; \
-    elif [ "$A2A" = "1" ] || [ "$A2A" = "true" ] || [ "$A2A" = "TRUE" ] || [ "$A2A" = "True" ] || [ "$A2A" = "yes" ] || [ "$A2A" = "YES" ] || [ "$A2A" = "Yes" ] || [ "$A2A" = "on" ] || [ "$A2A" = "ON" ] || [ "$A2A" = "On" ]; then \
-      python3 prepare_adk_web_a2a_agent_card.py; \
-      exec adk web --host 0.0.0.0 --port "$APP_PORT" --no-reload --otel_to_cloud --a2a .; \
+      exec uvicorn a2a_server:app --host 0.0.0.0 --port "${PORT:-$APP_PORT}"; \
     else \
-      exec adk web --host 0.0.0.0 --port "$APP_PORT" --no-reload --otel_to_cloud .; \
+      if [ "$A2A" = "1" ] || [ "$A2A" = "true" ] || [ "$A2A" = "TRUE" ] || [ "$A2A" = "True" ] || [ "$A2A" = "yes" ] || [ "$A2A" = "YES" ] || [ "$A2A" = "Yes" ] || [ "$A2A" = "on" ] || [ "$A2A" = "ON" ] || [ "$A2A" = "On" ]; then \
+        python3 prepare_adk_web_a2a_agent_card.py; \
+      fi; \
+      exec uvicorn "$FASTAPI_APP_MODULE" --host 0.0.0.0 --port "${PORT:-$APP_PORT}"; \
     fi

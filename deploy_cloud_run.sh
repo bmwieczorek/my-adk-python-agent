@@ -14,9 +14,15 @@ APP_NAME="bartek-adk-agent"
 CLOUD_RUN_SERVICE_NAME="${CLOUD_RUN_SERVICE_NAME:-$APP_NAME}"
 SERVE_MODE="${SERVE_MODE:-adk}" # adk | a2a
 OTEL_TO_CLOUD="${OTEL_TO_CLOUD:-true}"
+TRACE_TO_CLOUD="${TRACE_TO_CLOUD:-$OTEL_TO_CLOUD}"
 A2A="${A2A:-false}"
 A2A_CARD_PATH_PREFIX="${A2A_CARD_PATH_PREFIX:-/a2a}"
 A2A_CARD_BASE_URL="${A2A_CARD_BASE_URL:-}"
+FASTAPI_APP_MODULE="${FASTAPI_APP_MODULE:-adk_fastapi_server:app}"
+ADK_DISABLE_LOCAL_STORAGE="${ADK_DISABLE_LOCAL_STORAGE:-}"
+MEMORY_SERVICE_URI="${MEMORY_SERVICE_URI:-}"
+SESSION_SERVICE_URI="${SESSION_SERVICE_URI:-}"
+BQ_ANALYTICS_PLUGIN_ENABLE="${BQ_ANALYTICS_PLUGIN_ENABLE:-}"
 
 required_commands=(gcloud docker)
 for cmd in "${required_commands[@]}"; do
@@ -90,40 +96,14 @@ if [[ "$SERVE_MODE" == "a2a" ]] && is_truthy "$A2A"; then
   echo "Note: A2A=true is ignored when SERVE_MODE=a2a (standalone A2A server)." >&2
 fi
 
-if [[ ( "$SERVE_MODE" == "a2a" || "$ADK_WEB_A2A_ENABLED" == "true" ) && -z "${A2A_AGENT_MODULE:-}" ]]; then
-  echo ""
-  echo "Scanning for available root agents..."
-  AGENT_FOLDERS=()
-  while IFS= read -r file; do
-    folder="${file#./}"
-    folder="${folder%%/*}"
-    AGENT_FOLDERS+=("$folder")
-  done < <(grep -rl '^root_agent\s*=' --include='agent.py' . | sort)
-
-  if [[ ${#AGENT_FOLDERS[@]} -eq 0 ]]; then
-    echo "No root_agent definitions found in the repo." >&2
-    exit 1
-  fi
-
-  echo ""
-  printf "%-12s %-40s\n" "Option #" "Agent folder"
-  printf "%-12s %-40s\n" "--------" "----------------------------------------"
-  for i in "${!AGENT_FOLDERS[@]}"; do
-    printf "%-12s %-40s\n" "$((i + 1))" "${AGENT_FOLDERS[$i]}"
-  done
-  echo ""
-  read -rp "Select the agent to expose via A2A (Option #): " selection
-
-  if ! [[ "$selection" =~ ^[0-9]+$ ]] || (( selection < 1 || selection > ${#AGENT_FOLDERS[@]} )); then
-    echo "Invalid selection: $selection" >&2
-    exit 1
-  fi
-  A2A_AGENT_MODULE="${AGENT_FOLDERS[$((selection - 1))]}"
-  echo "Selected: ${A2A_AGENT_MODULE}"
-  echo ""
-fi
-
 A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_multi_agent}"
+
+if [[ "$SERVE_MODE" == "a2a" || "$ADK_WEB_A2A_ENABLED" == "true" ]]; then
+  if [[ ! -f "${A2A_AGENT_MODULE}/agent.py" ]]; then
+    echo "A2A_AGENT_MODULE must point to an agent folder with agent.py: ${A2A_AGENT_MODULE}" >&2
+    exit 1
+  fi
+fi
 
 if ! gcloud auth list --filter=status:ACTIVE --format='value(account)' | grep -q .; then
   echo "No active gcloud account. Run: gcloud auth login" >&2
@@ -252,15 +232,30 @@ env_vars=(
   "GCS_BUCKET=${GCS_BUCKET}"
   "APP_PORT=${CLOUD_RUN_PORT}"
   "SERVE_MODE=${SERVE_MODE}"
+  "FASTAPI_APP_MODULE=${FASTAPI_APP_MODULE}"
   "OTEL_TO_CLOUD=${OTEL_TO_CLOUD}"
+  "TRACE_TO_CLOUD=${TRACE_TO_CLOUD}"
+  "A2A=${A2A}"
 )
+
+if [[ -n "$ADK_DISABLE_LOCAL_STORAGE" ]]; then
+  env_vars+=("ADK_DISABLE_LOCAL_STORAGE=${ADK_DISABLE_LOCAL_STORAGE}")
+fi
+if [[ -n "$MEMORY_SERVICE_URI" ]]; then
+  env_vars+=("MEMORY_SERVICE_URI=${MEMORY_SERVICE_URI}")
+fi
+if [[ -n "$SESSION_SERVICE_URI" ]]; then
+  env_vars+=("SESSION_SERVICE_URI=${SESSION_SERVICE_URI}")
+fi
+if [[ -n "$BQ_ANALYTICS_PLUGIN_ENABLE" ]]; then
+  env_vars+=("BQ_ANALYTICS_PLUGIN_ENABLE=${BQ_ANALYTICS_PLUGIN_ENABLE}")
+fi
 
 if [[ "$SERVE_MODE" == "a2a" ]]; then
   env_vars+=("A2A_AGENT_MODULE=${A2A_AGENT_MODULE}")
   env_vars+=("A2A_PROTOCOL=https")
   env_vars+=("A2A_PORT=443")
 elif [[ "$ADK_WEB_A2A_ENABLED" == "true" ]]; then
-  env_vars+=("A2A=true")
   env_vars+=("A2A_AGENT_MODULE=${A2A_AGENT_MODULE}")
   env_vars+=("A2A_CARD_PATH_PREFIX=${A2A_CARD_PATH_PREFIX}")
   if [[ -n "$A2A_CARD_BASE_URL" ]]; then
@@ -334,7 +329,7 @@ if [[ "$SERVE_MODE" == "a2a" ]]; then
 elif [[ "$ADK_WEB_A2A_ENABLED" == "true" ]]; then
   A2A_ENDPOINT_URL="${SERVICE_URL}${A2A_CARD_PATH_PREFIX}/${A2A_AGENT_MODULE}"
   A2A_CARD_URL="${A2A_ENDPOINT_URL}/.well-known/agent-card.json"
-  MODE_LABEL="adk (integrated adk web --a2a)"
+  MODE_LABEL="adk (integrated FastAPI A2A)"
 else
   A2A_ENDPOINT_URL="${SERVICE_URL}"
   A2A_CARD_URL="${SERVICE_URL}/.well-known/agent-card.json"
@@ -345,7 +340,7 @@ echo ""
 echo "Deployment complete."
 echo "Image: ${AGENT_IMAGE_URI}"
 echo "Mode: ${MODE_LABEL}"
-echo "ADK Web URL: ${SERVICE_URL}"
+echo "Service URL: ${SERVICE_URL}"
 echo "A2A Endpoint URL: ${A2A_ENDPOINT_URL}"
 echo "A2A Agent Card URL: ${A2A_CARD_URL}"
 if [[ "$SERVE_MODE" != "a2a" && "$ADK_WEB_A2A_ENABLED" != "true" ]]; then

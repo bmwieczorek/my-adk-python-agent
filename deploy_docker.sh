@@ -5,7 +5,8 @@ set -euo pipefail
 # Mounts Application Default Credentials so the container can call Vertex AI,
 # BigQuery, Cloud Trace, etc. as your local identity.
 #
-# Set SERVE_MODE=a2a to start the A2A JSONRPC server instead of the ADK dev UI.
+# Set SERVE_MODE=a2a to start the standalone A2A JSONRPC server instead of the
+# default integrated FastAPI runtime.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
@@ -18,11 +19,13 @@ SERVE_MODE="${SERVE_MODE:-adk}"
 A2A="${A2A:-false}"
 A2A_AGENT_MODULE="${A2A_AGENT_MODULE:-my_multi_agent}"
 A2A_CARD_PATH_PREFIX="${A2A_CARD_PATH_PREFIX:-/a2a}"
-# Used only for integrated adk web A2A mode (SERVE_MODE=adk + A2A=true).
+FASTAPI_APP_MODULE="${FASTAPI_APP_MODULE:-adk_fastapi_server:app}"
+# Used only for integrated FastAPI A2A mode (SERVE_MODE=adk + A2A=true).
 # Defaults to localhost so the generated agent card is host-reachable.
 A2A_CARD_BASE_URL="${A2A_CARD_BASE_URL:-http://localhost:${HOST_PORT}}"
 # Pass OTEL_TO_CLOUD through when set — mirrors --otel_to_cloud on the adk container.
 OTEL_TO_CLOUD="${OTEL_TO_CLOUD:-}"
+TRACE_TO_CLOUD="${TRACE_TO_CLOUD:-$OTEL_TO_CLOUD}"
 
 is_truthy() {
   case "${1:-}" in
@@ -66,7 +69,7 @@ docker image prune -f
 # --- Run ---
 echo "Starting container: $APP_NAME on port $HOST_PORT (SERVE_MODE=$SERVE_MODE, A2A=$A2A, A2A_AGENT_MODULE=$A2A_AGENT_MODULE)"
 if [[ "$ADK_WEB_A2A_ENABLED" == "true" ]]; then
-  echo "Integrated adk web A2A mode enabled (expected agent card path: ${A2A_CARD_BASE_URL}${A2A_CARD_PATH_PREFIX}/${A2A_AGENT_MODULE}/.well-known/agent-card.json)"
+  echo "Integrated FastAPI A2A mode enabled (expected agent card path: ${A2A_CARD_BASE_URL}${A2A_CARD_PATH_PREFIX}/${A2A_AGENT_MODULE}/.well-known/agent-card.json)"
 fi
 echo "+ docker run --name $APP_NAME --rm -it -p $HOST_PORT:$CONTAINER_PORT ..."
 (docker rm -f "$APP_NAME" 2>/dev/null || true)
@@ -77,7 +80,9 @@ docker run --name "$APP_NAME" --rm -it \
   -e A2A_AGENT_MODULE="$A2A_AGENT_MODULE" \
   -e A2A_CARD_BASE_URL="$A2A_CARD_BASE_URL" \
   -e A2A_CARD_PATH_PREFIX="$A2A_CARD_PATH_PREFIX" \
+  -e FASTAPI_APP_MODULE="$FASTAPI_APP_MODULE" \
   -e OTEL_TO_CLOUD="$OTEL_TO_CLOUD" \
+  -e TRACE_TO_CLOUD="$TRACE_TO_CLOUD" \
   -e GOOGLE_CLOUD_PROJECT="$GOOGLE_CLOUD_PROJECT" \
   -e GOOGLE_CLOUD_LOCATION="$GOOGLE_CLOUD_LOCATION" \
   -e BIG_QUERY_DATASET_ID="$BIG_QUERY_DATASET_ID" \
