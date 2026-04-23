@@ -14,6 +14,9 @@ APP_NAME="bartek-adk-agent"
 CLOUD_RUN_SERVICE_NAME="${CLOUD_RUN_SERVICE_NAME:-$APP_NAME}"
 SERVE_MODE="${SERVE_MODE:-adk}" # adk | a2a
 OTEL_TO_CLOUD="${OTEL_TO_CLOUD:-true}"
+A2A="${A2A:-false}"
+A2A_CARD_PATH_PREFIX="${A2A_CARD_PATH_PREFIX:-/a2a}"
+A2A_CARD_BASE_URL="${A2A_CARD_BASE_URL:-}"
 
 required_commands=(gcloud docker)
 for cmd in "${required_commands[@]}"; do
@@ -22,6 +25,23 @@ for cmd in "${required_commands[@]}"; do
     exit 1
   fi
 done
+
+is_truthy() {
+  case "${1:-}" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+normalize_path_prefix() {
+  local value="${1:-/a2a}"
+  value="/${value#/}"
+  value="${value%/}"
+  if [[ -z "$value" ]]; then
+    value="/a2a"
+  fi
+  echo "$value"
+}
 
 GOOGLE_CLOUD_PROJECT="${GOOGLE_CLOUD_PROJECT:?Must set GOOGLE_CLOUD_PROJECT}"
 GOOGLE_CLOUD_LOCATION="${GOOGLE_CLOUD_LOCATION:?Must set GOOGLE_CLOUD_LOCATION}"
@@ -61,7 +81,16 @@ if [[ "$SERVE_MODE" != "adk" && "$SERVE_MODE" != "a2a" ]]; then
   exit 1
 fi
 
-if [[ "$SERVE_MODE" == "a2a" && -z "${A2A_AGENT_MODULE:-}" ]]; then
+ADK_WEB_A2A_ENABLED=false
+if [[ "$SERVE_MODE" == "adk" ]] && is_truthy "$A2A"; then
+  ADK_WEB_A2A_ENABLED=true
+  A2A_CARD_PATH_PREFIX="$(normalize_path_prefix "$A2A_CARD_PATH_PREFIX")"
+fi
+if [[ "$SERVE_MODE" == "a2a" ]] && is_truthy "$A2A"; then
+  echo "Note: A2A=true is ignored when SERVE_MODE=a2a (standalone A2A server)." >&2
+fi
+
+if [[ ( "$SERVE_MODE" == "a2a" || "$ADK_WEB_A2A_ENABLED" == "true" ) && -z "${A2A_AGENT_MODULE:-}" ]]; then
   echo ""
   echo "Scanning for available root agents..."
   AGENT_FOLDERS=()
@@ -230,6 +259,13 @@ if [[ "$SERVE_MODE" == "a2a" ]]; then
   env_vars+=("A2A_AGENT_MODULE=${A2A_AGENT_MODULE}")
   env_vars+=("A2A_PROTOCOL=https")
   env_vars+=("A2A_PORT=443")
+elif [[ "$ADK_WEB_A2A_ENABLED" == "true" ]]; then
+  env_vars+=("A2A=true")
+  env_vars+=("A2A_AGENT_MODULE=${A2A_AGENT_MODULE}")
+  env_vars+=("A2A_CARD_PATH_PREFIX=${A2A_CARD_PATH_PREFIX}")
+  if [[ -n "$A2A_CARD_BASE_URL" ]]; then
+    env_vars+=("A2A_CARD_BASE_URL=${A2A_CARD_BASE_URL}")
+  fi
 fi
 
 ENV_VARS_CSV="$(IFS=,; echo "${env_vars[*]}")"
@@ -283,15 +319,35 @@ if [[ "$SERVE_MODE" == "a2a" ]]; then
     --project "$GOOGLE_CLOUD_PROJECT" \
     --region "$CLOUD_RUN_REGION" \
     --update-env-vars "A2A_HOST=${A2A_HOST},A2A_PROTOCOL=https,A2A_PORT=443"
+elif [[ "$ADK_WEB_A2A_ENABLED" == "true" ]]; then
+  echo "Updating A2A_CARD_BASE_URL in Cloud Run env to: ${SERVICE_URL}"
+  gcloud run services update "$CLOUD_RUN_SERVICE_NAME" \
+    --project "$GOOGLE_CLOUD_PROJECT" \
+    --region "$CLOUD_RUN_REGION" \
+    --update-env-vars "A2A=true,A2A_AGENT_MODULE=${A2A_AGENT_MODULE},A2A_CARD_BASE_URL=${SERVICE_URL},A2A_CARD_PATH_PREFIX=${A2A_CARD_PATH_PREFIX}"
+fi
+
+if [[ "$SERVE_MODE" == "a2a" ]]; then
+  A2A_ENDPOINT_URL="${SERVICE_URL}"
+  A2A_CARD_URL="${SERVICE_URL}/.well-known/agent-card.json"
+  MODE_LABEL="a2a (standalone to_a2a server)"
+elif [[ "$ADK_WEB_A2A_ENABLED" == "true" ]]; then
+  A2A_ENDPOINT_URL="${SERVICE_URL}${A2A_CARD_PATH_PREFIX}/${A2A_AGENT_MODULE}"
+  A2A_CARD_URL="${A2A_ENDPOINT_URL}/.well-known/agent-card.json"
+  MODE_LABEL="adk (integrated adk web --a2a)"
+else
+  A2A_ENDPOINT_URL="${SERVICE_URL}"
+  A2A_CARD_URL="${SERVICE_URL}/.well-known/agent-card.json"
+  MODE_LABEL="adk"
 fi
 
 echo ""
 echo "Deployment complete."
 echo "Image: ${AGENT_IMAGE_URI}"
-echo "Mode: ${SERVE_MODE}"
+echo "Mode: ${MODE_LABEL}"
 echo "ADK Web URL: ${SERVICE_URL}"
-echo "A2A Endpoint URL: ${SERVICE_URL}"
-echo "A2A Agent Card URL: ${SERVICE_URL}/.well-known/agent-card.json"
-if [[ "$SERVE_MODE" != "a2a" ]]; then
-  echo "Note: A2A endpoint is active only when SERVE_MODE=a2a."
+echo "A2A Endpoint URL: ${A2A_ENDPOINT_URL}"
+echo "A2A Agent Card URL: ${A2A_CARD_URL}"
+if [[ "$SERVE_MODE" != "a2a" && "$ADK_WEB_A2A_ENABLED" != "true" ]]; then
+  echo "Note: A2A endpoint is active only when SERVE_MODE=a2a or A2A=true with SERVE_MODE=adk."
 fi

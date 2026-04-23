@@ -143,6 +143,10 @@ pip list --outdated
 # Default (ADK web UI):
 ./deploy_docker.sh
 
+# Model B (integrated A2A via adk web):
+export SERVE_MODE=adk A2A=true A2A_AGENT_MODULE=my_multi_agent
+./deploy_docker.sh
+
 # A2A mode with a specific agent:
 export SERVE_MODE=a2a A2A_AGENT_MODULE=my_multi_agent
 ./deploy_docker.sh
@@ -154,8 +158,11 @@ export SERVE_MODE=a2a
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVE_MODE` | `adk` | `adk` for ADK dev UI, `a2a` for A2A JSONRPC server |
-| `A2A_AGENT_MODULE` | `my_multi_agent` | Agent folder name to serve in A2A mode (`.agent` suffix added automatically) |
+| `SERVE_MODE` | `adk` | `adk` for ADK web, `a2a` for standalone A2A JSONRPC server |
+| `A2A` | `false` | When `true` with `SERVE_MODE=adk`, enables integrated `adk web --a2a` routes (Model B) |
+| `A2A_AGENT_MODULE` | `my_multi_agent` | Agent folder name used for both standalone and integrated A2A modes |
+| `A2A_CARD_BASE_URL` | `http://localhost:${HOST_PORT}` | Base URL used to generate Model B `agent.json` card URL |
+| `A2A_CARD_PATH_PREFIX` | `/a2a` | URL prefix used for Model B routes and generated card URL |
 | `HOST_PORT` | `8000` | Host port to publish |
 
 > **Important:** use `export` — plain `VAR=x && ./script.sh` does **not** pass vars to the script.
@@ -191,21 +198,22 @@ endpoint expectations between them.
 | Model | Bootstrap style | Discovery endpoint | Message endpoint | Typical settings |
 |---|---|---|---|---|
 | **Model A — standalone `to_a2a()` server (used by this repo's Cloud Run flow)** | `uvicorn a2a_server:app` (or Docker with `SERVE_MODE=a2a`) | `/.well-known/agent-card.json` | `POST /` with JSON-RPC methods like `message/send` and `message/sendStream` | `SERVE_MODE=a2a`, `A2A_AGENT_MODULE`, `A2A_HOST`, `A2A_PORT`, `A2A_PROTOCOL` |
-| **Model B — framework-integrated A2A mounted by `adk web`** | `adk web` + framework-specific A2A enablement | framework/version dependent (often `/.well-known/agent.json`) | framework/version dependent (often `/on_message_send*` or prefixed routes) | commonly `A2A=True` and agent `A2AConfig` (when that runtime is used) |
+| **Model B — framework-integrated A2A mounted by `adk web`** | `adk web --a2a` | framework/version dependent (in ADK 1.31, `/a2a/{app}/.well-known/agent-card.json`) | framework/version dependent (in ADK 1.31, `POST /a2a/{app}` with JSON-RPC) | in this repo: `SERVE_MODE=adk`, `A2A=true`, `A2A_AGENT_MODULE` (+ optional card URL vars); other runtimes may use `A2AConfig` |
 
-`deploy_cloud_run.sh` in this repository deploys **Model A**. In this codebase,
-setting only `A2A=True` does not switch runtime mode by itself.
+This repository now supports **both models**.
 
 Quick check on a deployed host:
 
 ```bash
 BASE_URL="https://<your-service-url>"
+# Model A:
 curl -si "${BASE_URL}/.well-known/agent-card.json" | head -n 1
-curl -si "${BASE_URL}/.well-known/agent.json" | head -n 1
+# Model B (ADK 1.31 path shape):
+curl -si "${BASE_URL}/a2a/<app>/.well-known/agent-card.json" | head -n 1
 ```
 
-If `agent-card.json` is `200`, you are on Model A. If `agent.json` and
-`/on_message_send*` are the active paths, you are likely on Model B.
+If `agent-card.json` is `200`, you are on Model A. If the prefixed
+`/a2a/<app>/...` endpoints are active, you are on Model B.
 
 ### How Model A works in this repo
 
@@ -213,7 +221,7 @@ The Dockerfile supports two serving modes controlled by the `SERVE_MODE` env var
 
 | `SERVE_MODE` | Entrypoint | Purpose |
 |---|---|---|
-| `adk` (default) | `adk web --host 0.0.0.0 --otel_to_cloud .` | Standard ADK dev UI — the same behaviour as before |
+| `adk` (default) | `adk web --host 0.0.0.0 --otel_to_cloud .` (or `adk web ... --a2a .` when `A2A=true`) | Standard ADK web flow, optionally with integrated Model B A2A routes |
 | `a2a` | `uvicorn a2a_server:app --host 0.0.0.0 --port 8000` | A2A JSONRPC server for agent-to-agent communication |
 
 The A2A mode is implemented via Google ADK's built-in
@@ -230,11 +238,25 @@ utility (`google.adk.a2a.utils.agent_to_a2a`), which wraps the existing
 - Manages sessions and task state in-memory via ADK's `InMemorySessionService`
   and the A2A SDK's `InMemoryTaskStore`.
 
+### How Model B works in this repo
+
+When `SERVE_MODE=adk` and `A2A=true`, the container:
+
+1. Runs `prepare_adk_web_a2a_agent_card.py` to generate
+   `<A2A_AGENT_MODULE>/agent.json` with a runtime URL.
+2. Starts `adk web --a2a .`, so ADK mounts framework-managed A2A routes.
+
+With ADK 1.31, the generated route shape is:
+
+- Agent Card: `/a2a/<app>/.well-known/agent-card.json`
+- JSON-RPC: `POST /a2a/<app>`
+
 ### Files overview
 
 | File | Role |
 |---|---|
 | `a2a_server.py` | Entry point — calls `to_a2a(root_agent, ...)` to create the Starlette ASGI app |
+| `prepare_adk_web_a2a_agent_card.py` | Runtime helper that writes `<app>/agent.json` for Model B (`adk web --a2a`) |
 | `my_multi_agent/agent.py` | Agent definition — `root_agent` with tools and instructions |
 | `Dockerfile` | Conditional `CMD` — runs `adk web` or `uvicorn a2a_server:app` based on `SERVE_MODE` |
 | `requirements-docker.in` | Adds [`a2a-sdk[http-server]`](https://pypi.org/project/a2a-sdk/) (Starlette server components) |
@@ -256,9 +278,23 @@ uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 A2A_AGENT_MODULE=my_upgrade_agent uvicorn a2a_server:app --host 0.0.0.0 --port 8000
 ```
 
+Model B (integrated adk web):
+
+```bash
+export SERVE_MODE=adk
+export A2A=true
+export A2A_AGENT_MODULE=my_multi_agent
+export A2A_CARD_BASE_URL=http://localhost:8000
+adk web --host 0.0.0.0 --port 8000 --no-reload --otel_to_cloud --a2a .
+```
+
 Verify the Agent Card:
 
 ```bash
+# Model B:
+curl http://localhost:8000/a2a/my_multi_agent/.well-known/agent-card.json | python3 -m json.tool
+
+# Model A:
 curl http://localhost:8000/.well-known/agent-card.json | python3 -m json.tool
 ```
 
@@ -293,6 +329,17 @@ export SERVE_MODE=a2a
 
 # With a specific agent:
 export SERVE_MODE=a2a A2A_AGENT_MODULE=my_multi_agent
+./deploy_docker.sh
+```
+
+For Model B (integrated A2A mounted by `adk web`), keep `SERVE_MODE=adk` and
+enable `A2A=true`:
+
+```bash
+export SERVE_MODE=adk
+export A2A=true
+export A2A_AGENT_MODULE=my_multi_agent
+export A2A_CARD_BASE_URL=http://localhost:8000
 ./deploy_docker.sh
 ```
 
@@ -880,11 +927,14 @@ podman rm -f mcpgateway
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVE_MODE` | `adk` | `adk` for ADK dev UI, `a2a` for A2A JSONRPC server |
-| `A2A_AGENT_MODULE` | `my_multi_agent` | Agent folder name to serve in A2A mode (`.agent` suffix added automatically by `a2a_server.py`) |
+| `SERVE_MODE` | `adk` | `adk` for ADK web, `a2a` for standalone A2A JSONRPC server |
+| `A2A` | `false` | When `true` with `SERVE_MODE=adk`, enables integrated `adk web --a2a` routes |
+| `A2A_AGENT_MODULE` | `my_multi_agent` | Agent folder name used for both standalone and integrated A2A modes |
 | `A2A_HOST` | `0.0.0.0` | Bind host for the A2A server |
 | `A2A_PORT` | `8000` | Bind port for the A2A server |
 | `A2A_PROTOCOL` | `http` | Protocol advertised in the Agent Card URL |
+| `A2A_CARD_BASE_URL` | *(unset)* | Optional base URL used to generate Model B `agent.json` (defaults to protocol+host+APP_PORT) |
+| `A2A_CARD_PATH_PREFIX` | `/a2a` | URL prefix used by Model B route/card generation |
 | `OTEL_TO_CLOUD` | *(unset)* | Set to `true` (or `1`/`yes`/`on`) to export OpenTelemetry traces and logs to Cloud Trace + Cloud Logging |
 | `ADK_SUPPRESS_A2A_EXPERIMENTAL_FEATURE_WARNINGS` | *(unset)* | Set to `1` to suppress ADK A2A experimental warnings |
 
@@ -1321,9 +1371,15 @@ export CLOUD_RUN_SUBNET=...
 export CLOUD_RUN_VPC_EGRESS=...
 export CLOUD_RUN_NETWORK_TAGS=...  # optional
 
-# A2A mode for Gemini Enterprise registration (Model A from section above):
+# Model A for Gemini Enterprise registration (standalone to_a2a server):
 export SERVE_MODE=a2a
 export A2A_AGENT_MODULE=my_multi_agent
+
+# Model B for Gemini Enterprise registration (integrated adk web --a2a):
+# export SERVE_MODE=adk
+# export A2A=true
+# export A2A_AGENT_MODULE=my_multi_agent
+# export A2A_CARD_PATH_PREFIX=/a2a
 
 ./deploy_cloud_run.sh
 ```
@@ -1341,16 +1397,25 @@ What the script does:
 - Auto-bumps image tag from current Cloud Run service image (or uses explicit `./deploy_cloud_run.sh 1.0.0`).
 - Builds + pushes Docker image to Artifact Registry or GCR.
 - Deploys Cloud Run with VPC network/subnet settings and runtime env vars.
-- In A2A mode, updates `A2A_HOST` to the deployed Cloud Run hostname and prints the Agent Card URL.
+- In Model A (`SERVE_MODE=a2a`), updates `A2A_HOST` to the deployed Cloud Run hostname.
+- In Model B (`SERVE_MODE=adk` + `A2A=true`), updates `A2A_CARD_BASE_URL` to the deployed Cloud Run URL.
+- Prints endpoint URLs for the selected mode.
 
 ### Access Cloud Run Agent Card with Bearer token
 
-For private Cloud Run services, call the Agent Card with an identity token:
+For private Cloud Run services, call the Agent Card with an identity token.
+Choose the endpoint that matches your runtime model:
 
 ```bash
 SERVICE_URL="https://bartek-adk-agent-579170888348.us-central1.run.app"
+
+# Model A:
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "${SERVICE_URL}/.well-known/agent-card.json" | jq
+
+# Model B (my_multi_agent example):
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "${SERVICE_URL}/a2a/my_multi_agent/.well-known/agent-card.json" | jq
 ```
 
 If your environment requires audience-bound tokens, generate it explicitly:
@@ -1382,8 +1447,11 @@ gcloud run services proxy bartek-adk-agent \
 Use:
 
 ```bash
-# A2A Agent Card (works well for A2A Inspector)
+# Model A Agent Card (works well for A2A Inspector)
 http://127.0.0.1:8080/.well-known/agent-card.json
+
+# Model B Agent Card (my_multi_agent example)
+http://127.0.0.1:8080/a2a/my_multi_agent/.well-known/agent-card.json
 
 # Service root
 http://127.0.0.1:8080
@@ -1830,27 +1898,42 @@ Then use the same session-creation + `/run_sse` flow as above.
 
 ### Talking to the agent via A2A protocol
 
-`adk web` can serve A2A endpoints for agents that define `A2AConfig`
-(Model B; see [Two runtime models (important)](#two-runtime-models-important)).
-In this repo, deployment scripts and examples use Model A via `a2a_server.py`
-(or Docker with `SERVE_MODE=a2a`) for consistent A2A serving across agents.
+This repo supports both models from
+[Two runtime models (important)](#two-runtime-models-important):
 
-When running via the standalone `a2a_server.py` (or Docker with `SERVE_MODE=a2a`),
-the A2A JSONRPC endpoints are served at the root.
+- **Model B (integrated):** `SERVE_MODE=adk` + `A2A=true` → `adk web --a2a`
+- **Model A (standalone):** `SERVE_MODE=a2a` → `uvicorn a2a_server:app`
 
 #### Discover the Agent Card
 
 ```bash
-# Via adk web (multi-agent — card per app):
-curl -s http://localhost:8000/.well-known/agent-card.json | python3 -m json.tool
+# Model B (integrated adk web, app=my_multi_agent):
+curl -s http://localhost:8000/a2a/my_multi_agent/.well-known/agent-card.json | python3 -m json.tool
 
-# Via standalone a2a_server.py:
+# Model A (standalone a2a_server.py):
 curl -s http://localhost:8000/.well-known/agent-card.json | python3 -m json.tool
 ```
 
 #### Send a message via A2A JSONRPC
 
 ```bash
+# Model B (integrated adk web, app=my_multi_agent):
+curl -X POST http://localhost:8000/a2a/my_multi_agent \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "message/send",
+    "params": {
+      "message": {
+        "messageId": "upgrade-001",
+        "role": "user",
+        "parts": [{"kind": "text", "text": "Please upgrade the dependencies in this pom.xml: https://raw.githubusercontent.com/bmwieczorek/my-apache-beam-dataflow/master/pom.xml"}]
+      }
+    },
+    "id": 1
+  }'
+
+# Model A (standalone a2a_server.py):
 curl -X POST http://localhost:8000/ \
   -H "Content-Type: application/json" \
   -d '{
