@@ -183,7 +183,31 @@ The agent can be exposed as an [A2A](https://a2a-protocol.org/)-compliant JSONRP
 allowing registration with **IBM ContextForge**, **Gemini Enterprise**, or any
 other A2A-compatible agent registry.
 
-### How it works
+### Two runtime models (important)
+
+The terms "A2A enabled" can refer to two different runtime models. Do not mix
+endpoint expectations between them.
+
+| Model | Bootstrap style | Discovery endpoint | Message endpoint | Typical settings |
+|---|---|---|---|---|
+| **Model A — standalone `to_a2a()` server (used by this repo's Cloud Run flow)** | `uvicorn a2a_server:app` (or Docker with `SERVE_MODE=a2a`) | `/.well-known/agent-card.json` | `POST /` with JSON-RPC methods like `message/send` and `message/sendStream` | `SERVE_MODE=a2a`, `A2A_AGENT_MODULE`, `A2A_HOST`, `A2A_PORT`, `A2A_PROTOCOL` |
+| **Model B — framework-integrated A2A mounted by `adk web`** | `adk web` + framework-specific A2A enablement | framework/version dependent (often `/.well-known/agent.json`) | framework/version dependent (often `/on_message_send*` or prefixed routes) | commonly `A2A=True` and agent `A2AConfig` (when that runtime is used) |
+
+`deploy_cloud_run.sh` in this repository deploys **Model A**. In this codebase,
+setting only `A2A=True` does not switch runtime mode by itself.
+
+Quick check on a deployed host:
+
+```bash
+BASE_URL="https://<your-service-url>"
+curl -si "${BASE_URL}/.well-known/agent-card.json" | head -n 1
+curl -si "${BASE_URL}/.well-known/agent.json" | head -n 1
+```
+
+If `agent-card.json` is `200`, you are on Model A. If `agent.json` and
+`/on_message_send*` are the active paths, you are likely on Model B.
+
+### How Model A works in this repo
 
 The Dockerfile supports two serving modes controlled by the `SERVE_MODE` env var:
 
@@ -1259,6 +1283,123 @@ curl -s -N -X POST https://<A2A_EXTERNAL_URL> \
 ./deploy_gke.sh 1.0.0
 ```
 
+## Deploy to Cloud Run (Artifact Registry / GCR)
+
+Quick path (script):
+
+```bash
+chmod +x ./deploy_cloud_run.sh
+
+export GOOGLE_CLOUD_PROJECT=...
+export GOOGLE_CLOUD_LOCATION=...
+export BIG_QUERY_DATASET_ID=...
+export GCS_BUCKET=...
+
+# Image repository:
+# Required base repository (used to derive AGENT_IMAGE_REPO when omitted).
+# Use GCR_REPOSITORY from your local environment (do not redefine it here).
+# Example formats:
+#   us-central1-docker.pkg.dev/${GOOGLE_CLOUD_PROJECT}/<repo>/<path>
+#   gcr.io/${GOOGLE_CLOUD_PROJECT}
+
+# Optional explicit override (defaults to ${GCR_REPOSITORY}/bartek-adk-agent):
+export AGENT_IMAGE_REPO=${GCR_REPOSITORY}/bartek-adk-agent
+#
+# Option B (GCR):
+# export GCR_REPOSITORY=gcr.io/${GOOGLE_CLOUD_PROJECT}
+# export AGENT_IMAGE_REPO=${GCR_REPOSITORY}/bartek-adk-agent
+
+export CLOUD_RUN_SERVICE_NAME=bartek-adk-agent
+# Optional: defaults to bartek-adk-agent@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com
+export CLOUD_RUN_SERVICE_ACCOUNT=bartek-adk-agent@${GOOGLE_CLOUD_PROJECT}.iam.gserviceaccount.com
+export CLOUD_RUN_REGION=${GOOGLE_CLOUD_LOCATION}
+
+# Cloud Run VPC settings:
+# Use the exact network/subnetwork values documented in the SRE Makefile comments.
+export CLOUD_RUN_NETWORK=...
+export CLOUD_RUN_SUBNET=...
+export CLOUD_RUN_VPC_EGRESS=...
+export CLOUD_RUN_NETWORK_TAGS=...  # optional
+
+# A2A mode for Gemini Enterprise registration (Model A from section above):
+export SERVE_MODE=a2a
+export A2A_AGENT_MODULE=my_multi_agent
+
+./deploy_cloud_run.sh
+```
+
+What the script does:
+- Validates required env vars and tools.
+- Creates `CLOUD_RUN_SERVICE_ACCOUNT` if it does not exist yet (for same-project SAs).
+- Grants GKE-baseline runtime IAM roles to `CLOUD_RUN_SERVICE_ACCOUNT`:
+  - `roles/aiplatform.user`
+  - `roles/bigquery.dataEditor`
+  - `roles/bigquery.jobUser`
+  - `roles/cloudtrace.agent`
+  - `roles/logging.logWriter`
+  - `roles/monitoring.metricWriter` (**added last**; keep under review and remove if not needed).
+- Auto-bumps image tag from current Cloud Run service image (or uses explicit `./deploy_cloud_run.sh 1.0.0`).
+- Builds + pushes Docker image to Artifact Registry or GCR.
+- Deploys Cloud Run with VPC network/subnet settings and runtime env vars.
+- In A2A mode, updates `A2A_HOST` to the deployed Cloud Run hostname and prints the Agent Card URL.
+
+### Access Cloud Run Agent Card with Bearer token
+
+For private Cloud Run services, call the Agent Card with an identity token:
+
+```bash
+SERVICE_URL="https://bartek-adk-agent-579170888348.us-central1.run.app"
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "${SERVICE_URL}/.well-known/agent-card.json" | jq
+```
+
+If your environment requires audience-bound tokens, generate it explicitly:
+
+```bash
+SERVICE_URL="https://bartek-adk-agent-579170888348.us-central1.run.app"
+ID_TOKEN="$(gcloud auth print-identity-token --audiences="${SERVICE_URL}")"
+curl -s -H "Authorization: Bearer ${ID_TOKEN}" \
+  "${SERVICE_URL}/.well-known/agent-card.json" | jq
+```
+
+### Access a private Cloud Run service locally with `gcloud run services proxy`
+
+If Cloud Run is not publicly invokable, use a local authenticated proxy.
+`gcloud run services proxy` uses your logged-in identity token and exposes the
+service on `localhost`, so you can open it in a browser or point A2A Inspector
+to a local URL.
+
+Run (foreground):
+
+```bash
+source ~/.gcp-my-adk-python-agent
+gcloud run services proxy bartek-adk-agent \
+  --project ${GOOGLE_CLOUD_PROJECT} \
+  --region ${GOOGLE_CLOUD_LOCATION} \
+  --port 8080
+```
+
+Use:
+
+```bash
+# A2A Agent Card (works well for A2A Inspector)
+http://127.0.0.1:8080/.well-known/agent-card.json
+
+# Service root
+http://127.0.0.1:8080
+```
+
+Stop:
+
+```bash
+# If running in foreground:
+#   press Ctrl+C
+
+# If running in background:
+ps -axo pid,command | grep -F 'gcloud run services proxy bartek-adk-agent' | grep -v grep
+kill <PID>
+```
+
 ## BigQuery Agent Analytics
 
 The `BigQueryAgentAnalyticsPlugin` exports agent usage and token metrics to BigQuery.
@@ -1689,9 +1830,10 @@ Then use the same session-creation + `/run_sse` flow as above.
 
 ### Talking to the agent via A2A protocol
 
-`adk web` can serve A2A endpoints for agents that define `A2AConfig`.
-In this repo, the recommended path is `a2a_server.py` (or Docker with
-`SERVE_MODE=a2a`) for consistent A2A serving across agents.
+`adk web` can serve A2A endpoints for agents that define `A2AConfig`
+(Model B; see [Two runtime models (important)](#two-runtime-models-important)).
+In this repo, deployment scripts and examples use Model A via `a2a_server.py`
+(or Docker with `SERVE_MODE=a2a`) for consistent A2A serving across agents.
 
 When running via the standalone `a2a_server.py` (or Docker with `SERVE_MODE=a2a`),
 the A2A JSONRPC endpoints are served at the root.
