@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Comma-separated (or newline/semicolon-separated) case-insensitive markers.
+# Example shape (set in local shell profile, not in repo files):
+#   export GIT_PRECOMMIT_HOOK_DISALLOWED_MARKERS='marker1,marker2'
+RAW_MARKERS="${GIT_PRECOMMIT_HOOK_DISALLOWED_MARKERS:-}"
+if [[ -z "${RAW_MARKERS//[[:space:]]/}" ]]; then
+  echo "❌ Commit blocked: GIT_PRECOMMIT_HOOK_DISALLOWED_MARKERS is not set."
+  echo "Set it to comma-separated markers in your local shell environment."
+  exit 1
+fi
+
+STAGED_FILES=()
+while IFS= read -r file; do
+  STAGED_FILES+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR)
+if [[ ${#STAGED_FILES[@]} -eq 0 ]]; then
+  exit 0
+fi
+
+# Normalize separators to commas, then split.
+NORMALIZED_MARKERS="${RAW_MARKERS//$'\n'/,}"
+NORMALIZED_MARKERS="${NORMALIZED_MARKERS//;/,}"
+IFS=',' read -r -a MARKERS <<< "${NORMALIZED_MARKERS}"
+
+HAS_MATCH=0
+for marker in "${MARKERS[@]}"; do
+  # Trim surrounding whitespace.
+  marker="${marker#"${marker%%[![:space:]]*}"}"
+  marker="${marker%"${marker##*[![:space:]]}"}"
+  [[ -z "${marker}" ]] && continue
+
+  MATCHES="$(git grep --cached -nI -i -e "${marker}" -- "${STAGED_FILES[@]}" || true)"
+  if [[ -n "${MATCHES}" ]]; then
+    if [[ "${HAS_MATCH}" -eq 0 ]]; then
+      echo "❌ Commit blocked: found disallowed marker(s) in staged files."
+      echo "Remove matched values or update local marker configuration."
+      echo ""
+      HAS_MATCH=1
+    fi
+    echo "${MATCHES}"
+    echo ""
+  fi
+done
+
+if [[ "${HAS_MATCH}" -ne 0 ]]; then
+  exit 1
+fi
+
+exit 0
