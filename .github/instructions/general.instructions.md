@@ -95,3 +95,18 @@ Apply the SOLID design principles adapted for Python:
   account emails, registry URLs, or other environment-specific values. Always
   use placeholders (e.g. `${GOOGLE_CLOUD_PROJECT}`, `${GKE_CLUSTER_NAME}`) or
   shell variables that are resolved at runtime.
+
+## Documentation and shell example hygiene
+
+- Hard requirement: never include literal values in bash `export` examples in
+  repository files (including commented lines). This is forbidden:
+  - `export GOOGLE_CLOUD_PROJECT=<real-project-id>`
+  - `# export GOOGLE_CLOUD_PROJECT=<real-project-id>`
+- It is acceptable to keep region/location values in examples (for example
+  `us-central1`), but never use real project IDs or project names.
+- Use only one of these patterns in docs:
+  - `export VAR=...`
+  - `export VAR=${OTHER_VAR}`
+  - `# VAR is already exported in your shell`
+- For URL examples, use placeholders or masked values (`<masked>`) instead of
+  real environment-specific identifiers.
